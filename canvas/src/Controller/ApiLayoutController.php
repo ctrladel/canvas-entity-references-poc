@@ -548,6 +548,9 @@ final class ApiLayoutController {
     }
     else {
       $tree = $this->componentTreeLoader->load($entity);
+      if ($entity instanceof Pattern && $preview_entity !== NULL) {
+        $tree = $entity->getComponentTree($preview_entity);
+      }
       // Render the preview in the negotiated language: when this request is
       // for a non-default language that has a translation override, preview
       // the merged (base + override) tree, exactly what the front end will

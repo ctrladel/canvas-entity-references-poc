@@ -109,7 +109,7 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
    *
    * A reference, picked or from a field. Only then does a required linked prop
    * without a value show its example value. Everything else (links that read a
-   * Content Template's own entity, instances outside a reference)
+   * Content Template's own entity, Patterns, instances outside a reference)
    * behaves as it did before references existed.
    *
    * @see ::getExplicitInput()
@@ -1140,6 +1140,14 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
     $suggestions = NULL;
     if ($link_target !== NULL) {
       $raw = $this->propSourceSuggester->suggest($this->getSourceSpecificComponentId(), $this->getMetadata(), $link_target);
+      if ($entity instanceof Pattern) {
+        // A Pattern stores links as entity-field sources (adapted or not) and
+        // the URL of its entity. A reference to the entity itself is not stored.
+        foreach ($raw as &$s) {
+          $s[PropSource::HostEntity->value] = [];
+        }
+        unset($s);
+      }
       $suggestions = PropSourceSuggester::structureSuggestionsForHierarchicalResponse($raw);
     }
 

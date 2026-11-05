@@ -379,6 +379,13 @@ final class ComponentTreeReference {
         return NULL;
       }
       $bundles = $definition->getBundles() ?? [];
+      if (\count($bundles) > 1) {
+        // A host that names several bundles has no single root until something
+        // supplies an entity of one of them (a placement does, an editor
+        // working on one bundle does). Taking the first would be a guess, so
+        // there is nothing to read a field from.
+        return NULL;
+      }
       if ($bundles === []) {
         // Only a type without bundles is one target.
         return \Drupal::entityTypeManager()->getDefinition($type)->hasKey('bundle') ? NULL : $type . ':' . $type;
@@ -390,6 +397,84 @@ final class ComponentTreeReference {
       return \Drupal::service(ComponentTreeReferenceTargets::class)->isAllowed($target) ? $target : NULL;
     }
     return NULL;
+  }
+
+  /**
+   * Finds the field references of a tree that are read from its root.
+   *
+   * Those are the ones whose chain of references above reaches the tree's host
+   * without a picked entity in between, directly or through other field
+   * references: what they resolve to depends on the host. A field reference
+   * under a picked reference reads from that entity and does not.
+   *
+   * @param array<int, array<string, mixed>> $items
+   *
+   * @return array<string, string>
+   *   The stored `field:<name>`, by instance UUID.
+   */
+  public static function rootFieldReferences(array $items): array {
+    $by_uuid = [];
+    foreach ($items as $item) {
+      $by_uuid[$item['uuid']] = $item;
+    }
+    $holders = self::holdersInItems($items);
+    $found = [];
+    foreach ($by_uuid as $uuid => $item) {
+      $reference = $item['reference'] ?? NULL;
+      if (!\is_string($reference) || ComponentTreeFieldReference::parse($reference) === NULL) {
+        continue;
+      }
+      // Follow the field references above, to the root or to a picked one.
+      $reaches = TRUE;
+      $seen = [$uuid => TRUE];
+      $parent = $item['parent_uuid'] ?? NULL;
+      while ($parent !== NULL && isset($by_uuid[$parent])) {
+        $holder = $holders[$parent] ?? NULL;
+        if ($holder === NULL || isset($seen[$holder])) {
+          break;
+        }
+        $seen[$holder] = TRUE;
+        if (ComponentTreeFieldReference::parse($by_uuid[$holder]['reference']) === NULL) {
+          $reaches = FALSE;
+          break;
+        }
+        $parent = $by_uuid[$holder]['parent_uuid'] ?? NULL;
+      }
+      if ($reaches) {
+        $found[$uuid] = $reference;
+      }
+    }
+    return $found;
+  }
+
+  /**
+   * Gives instances the field references they have for a bundle.
+   *
+   * The reverse of ::rootFieldReferences(). A reference is only applied to an
+   * instance that holds none, with no reference in the tree above it: one that
+   * does is read from that, and a stored reference for it is not what it reads.
+   *
+   * @param array<int, array<string, mixed>> $items
+   * @param array<string, string> $references
+   *   `field:<name>`, by instance UUID.
+   *
+   * @return array<int, array<string, mixed>>
+   *   The items, with those references.
+   */
+  public static function withFieldReferences(array $items, array $references): array {
+    if ($references === []) {
+      return $items;
+    }
+    // The holder of an instance is itself, or the nearest reference above it.
+    $holders = self::holdersInItems($items);
+    foreach ($items as $delta => $item) {
+      $uuid = $item['uuid'];
+      if (!isset($references[$uuid]) || ComponentTreeFieldReference::parse($references[$uuid]) === NULL || ($holders[$uuid] ?? NULL) !== NULL) {
+        continue;
+      }
+      $items[$delta]['reference'] = $references[$uuid];
+    }
+    return $items;
   }
 
   /**
