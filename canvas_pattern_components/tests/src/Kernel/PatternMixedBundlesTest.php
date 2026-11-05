@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Drupal\Tests\canvas_pattern_components\Kernel;
 
 use Drupal\canvas\Entity\Component;
+use Drupal\canvas\Entity\Page;
 use Drupal\canvas\ComponentTreeReference;
 use Drupal\canvas\Entity\Pattern;
 use Drupal\canvas\PropExpressions\StructuredData\FieldPropExpression;
@@ -131,14 +132,156 @@ final class PatternMixedBundlesTest extends CanvasKernelTestBase {
     return $node;
   }
 
+  private static function ref(NodeInterface $node): string {
+    return \sprintf('node:%s:%s', $node->bundle(), $node->uuid());
+  }
+
+  /**
+   * @param list<string|null> $references
+   */
+  private function createPage(array $references, bool $save = TRUE): Page {
+    $tree = [];
+    foreach ($references as $delta => $reference) {
+      $tree[] = [
+        'uuid' => \sprintf('b3c8f0d2-1111-4a2b-9c3d-%012d', $delta + 1),
+        'component_id' => 'pattern.' . self::PATTERN_ID,
+        'component_version' => '::ACTIVE_VERSION_IN_SUT::',
+        'inputs' => [],
+        'reference' => $reference,
+      ];
+    }
+    $page = Page::create(['title' => 'Host page', 'components' => self::populateActiveComponentVersionPlaceholders($tree)]);
+    if ($save) {
+      $page->save();
+    }
+    return $page;
+  }
+
+  private function renderPage(Page $page): string {
+    $build = $page->getComponentTree()->toRenderable($page, FALSE);
+    return (string) $this->container->get(RendererInterface::class)->renderInIsolation($build);
+  }
+
+  /**
+   * One Pattern, two placements: each shows the fields of its own bundle.
+   */
+  public function testEachPlacementShowsTheFieldsOfItsOwnBundle(): void {
+    $this->createPattern([self::HEADING => ['text' => self::BOTH]]);
+    $article = $this->createNode('article', 'Article title');
+    $news = $this->createNode('news', 'News title', 'News headline');
+    $html = $this->renderPage($this->createPage([self::ref($article), self::ref($news)]));
+    self::assertStringContainsString('Article title', $html);
+    self::assertStringContainsString('News headline', $html);
+    self::assertStringNotContainsString('News title', $html);
+    self::assertStringNotContainsString('Example heading', $html);
+  }
+
+  /**
+   * Editing either entity, or the Pattern, invalidates what was cached for both.
+   */
+  public function testChangesReachBothPlacements(): void {
+    $pattern = $this->createPattern([self::HEADING => ['text' => self::BOTH]]);
+    $article = $this->createNode('article', 'Article title');
+    $news = $this->createNode('news', 'News title', 'News headline');
+    $page = $this->createPage([self::ref($article), self::ref($news)]);
+    $build = $page->getComponentTree()->toRenderable($page, FALSE);
+    $this->container->get(RendererInterface::class)->renderInIsolation($build);
+    $tags = CacheableMetadata::createFromRenderArray($build)->getCacheTags();
+    foreach ([$article->getCacheTags(), $news->getCacheTags(), $pattern->getCacheTags()] as $expected) {
+      self::assertSame([], \array_diff($expected, $tags), 'A placement bubbles the tags of its entity and the Pattern.');
+    }
+
+    // What was cached for the page goes stale when any of the three changes.
+    $cache = $this->container->get('cache.render');
+    $store = static fn (string $cid) => $cache->set($cid, 'cached page', Cache::PERMANENT, $tags);
+    $store('cached_page');
+    self::assertNotFalse($cache->get('cached_page'), 'The cached copy is a hit.');
+    $news->set('field_headline', 'Changed headline')->save();
+    self::assertFalse($cache->get('cached_page'), 'Editing the news item invalidates it.');
+    self::assertStringContainsString('Changed headline', $this->renderPage($page));
+
+    $store('cached_page');
+    $article->set('title', 'Changed title')->save();
+    self::assertFalse($cache->get('cached_page'), 'Editing the article invalidates it.');
+    self::assertStringContainsString('Changed title', $this->renderPage($page));
+
+    $store('cached_page');
+    $pattern = Pattern::load(self::PATTERN_ID);
+    self::assertInstanceOf(Pattern::class, $pattern);
+    $pattern->setThirdPartySetting('canvas_pattern_components', 'links', [self::HEADING => ['text' => ['article' => self::ARTICLE_TITLE]]])->save();
+    self::assertFalse($cache->get('cached_page'), 'Editing the Pattern invalidates it.');
+    $html = $this->renderPage($page);
+    self::assertStringContainsString('Changed title', $html);
+    self::assertStringContainsString('Example heading', $html, 'News lost its link and shows the static value.');
+  }
+
+  /**
+   * A prop with no link for a bundle keeps the tree's static value there.
+   */
+  public function testUnmappedBundleShowsTheStaticValue(): void {
+    $pattern = $this->createPattern([self::HEADING => ['text' => ['article' => self::ARTICLE_TITLE]]]);
+    self::assertCount(0, $pattern->getTypedData()->validate());
+    $article = $this->createNode('article', 'Article title');
+    $news = $this->createNode('news', 'News title', 'News headline');
+    $html = $this->renderPage($this->createPage([self::ref($article), self::ref($news)]));
+    self::assertStringContainsString('Article title', $html);
+    self::assertStringContainsString('Example heading', $html);
+    self::assertStringNotContainsString('News headline', $html);
+    self::assertStringNotContainsString('News title', $html);
+  }
+
+  /**
+   * A URL link and an adapter work on the branch of their own bundle.
+   */
+  public function testUrlLinksAndAdaptersWorkPerBundle(): void {
+    $this->createPattern([
+      self::CTA => ['href' => ['news' => ['sourceType' => 'host-entity-url', 'absolute' => TRUE]]],
+      self::DATE => ['date' => ['article' => ['sourceType' => 'entity-field', 'expression' => 'ℹ︎␜entity:node:article␝created␞␟value', 'adapter' => 'unix_to_date']]],
+    ]);
+    $article = $this->createNode('article', 'Article title');
+    $article->setCreatedTime(1700000000)->save();
+    $news = $this->createNode('news', 'News title', 'News headline');
+    $html = $this->renderPage($this->createPage([self::ref($article), self::ref($news)]));
+    self::assertStringContainsString('href="' . $news->toUrl()->setAbsolute()->toString() . '"', $html);
+    self::assertStringContainsString('static.example.com', $html, 'The article keeps the static link.');
+    self::assertStringNotContainsString('href="' . $article->toUrl()->setAbsolute()->toString() . '"', $html);
+    self::assertSame(1, \substr_count($html, 'datetime="2023-11-14"'), 'Only the article has the date link.');
+  }
+
+  /**
+   * The requirement of a placement takes all the bundles; others do not fit.
+   */
+  public function testPlacementFitsAnyBoundBundleOnly(): void {
+    $this->createPattern([]);
+    $source = Component::load('pattern.' . self::PATTERN_ID)?->getComponentSource();
+    self::assertNotNull($source);
+    self::assertSame(['article', 'news'], $source->getOwnReferenceRequirement()?->getBundles());
+    $article = $this->createNode('article', 'A');
+    $news = $this->createNode('news', 'N', 'H');
+    $basic = $this->createNode('page', 'P');
+    foreach ([$article, $news] as $node) {
+      self::assertCount(0, $this->createPage([self::ref($node)], FALSE)->validate(), $node->bundle() . ' fits');
+    }
+    $page = $this->createPage([self::ref($basic)], FALSE);
+    $violations = $page->validate();
+    self::assertGreaterThan(0, $violations->count());
+    self::assertStringContainsString('reference', $violations[0]->getPropertyPath());
+    self::assertStringNotContainsString('P', $this->renderPage($page));
+  }
+
   /**
    * A base field the editor offers is an expression of no bundle in particular
-   * (`entity:node`): it holds for the bundle it is stored for.
+   * (`entity:node`): it holds for the bundle it is stored for, and renders.
    */
   public function testExpressionOfNoBundleHoldsForTheBundleItIsStoredFor(): void {
     $link = ['sourceType' => 'entity-field', 'expression' => 'ℹ︎␜entity:node␝created␞␟value', 'adapter' => 'unix_to_date'];
     $pattern = $this->createPattern([self::DATE => ['date' => ['article' => $link]]]);
     self::assertCount(0, $pattern->getTypedData()->validate());
+    $article = $this->createNode('article', 'Article title');
+    $article->setCreatedTime(1700000000)->save();
+    $news = $this->createNode('news', 'News title', 'News headline');
+    $html = $this->renderPage($this->createPage([self::ref($article), self::ref($news)]));
+    self::assertSame(1, \substr_count($html, 'datetime="2023-11-14"'), 'Only the article has the date link.');
   }
 
   /**
@@ -200,6 +343,7 @@ final class PatternMixedBundlesTest extends CanvasKernelTestBase {
     self::assertContains('node.type.article', $config);
     self::assertNotContains('node.type.news', $config, 'The stored dependencies are recalculated after the removal.');
     self::assertNotContains('field.field.node.news.field_headline', $config);
+    self::assertStringContainsString('Article title', $this->renderPage($this->createPage([self::ref($this->createNode('article', 'Article title'))])));
   }
 
   /**
@@ -215,6 +359,9 @@ final class PatternMixedBundlesTest extends CanvasKernelTestBase {
     $config = $pattern->getDependencies()['config'] ?? [];
     self::assertContains('node.type.news', $config, 'The bundle stays a dependency of the binding.');
     self::assertNotContains('field.field.node.news.field_headline', $config, 'The stored dependencies are recalculated after the removal.');
+    $html = $this->renderPage($this->createPage([self::ref($this->createNode('article', 'Article title')), self::ref($this->createNode('news', 'News title'))]));
+    self::assertStringContainsString('Article title', $html);
+    self::assertStringContainsString('Example heading', $html);
   }
 
   /**
@@ -265,6 +412,7 @@ final class PatternMixedBundlesTest extends CanvasKernelTestBase {
       $pattern->getTypedData()->validate();
       $article = $this->createNode('article', 'Article title');
       $news = $this->createNode('news', 'News title', 'News headline');
+      $this->renderPage($this->createPage([self::ref($article), self::ref($news)]));
       $links = $this->container->get(PatternLinks::class);
       $links->contractForStorage($links->expandForEditor($pattern, $links->pickPreviewHost($pattern, 'news')));
       NodeType::load('news')?->delete();
@@ -273,6 +421,72 @@ final class PatternMixedBundlesTest extends CanvasKernelTestBase {
       \restore_error_handler();
     }
     self::assertSame([], $notices);
+  }
+
+  /**
+   * The client is told which bound bundles have a link or a reference.
+   */
+  public function testClientInfoListsTheMappedBundles(): void {
+    $this->createPattern([self::HEADING => ['text' => ['article' => self::ARTICLE_TITLE]]]);
+    self::assertSame(['node:article'], $this->clientInfo()['patternMappedBundles']);
+    self::assertSame(['node:article', 'node:news'], $this->clientInfo()['ownReferenceRequirement']);
+  }
+
+  /**
+   * Bound with nothing mapped: the list is there and empty.
+   */
+  public function testClientInfoListsNoBundlesWhenNothingIsMapped(): void {
+    $this->createPattern([]);
+    self::assertSame([], $this->clientInfo()['patternMappedBundles']);
+    self::assertSame(['node:article', 'node:news'], $this->clientInfo()['ownReferenceRequirement']);
+  }
+
+  /**
+   * Publishing a change to the mapping is seen at once, without clearing caches.
+   */
+  public function testClientInfoFollowsAChangeToThePattern(): void {
+    $pattern = $this->createPattern([]);
+    self::assertSame([], $this->clientInfo()['patternMappedBundles']);
+    $pattern->setThirdPartySetting('canvas_pattern_components', 'links', [self::HEADING => ['text' => self::BOTH]]);
+    $pattern->save();
+    self::assertSame(['node:article', 'node:news'], $this->clientInfo()['patternMappedBundles']);
+  }
+
+  /**
+   * An unbound Pattern says it is a Pattern, with no bundles and no requirement.
+   */
+  public function testClientInfoOfAnUnboundPattern(): void {
+    $pattern = $this->buildPattern([]);
+    $pattern->unsetThirdPartySetting('canvas_pattern_components', 'entity_type_id');
+    $pattern->unsetThirdPartySetting('canvas_pattern_components', 'bundles');
+    $pattern->unsetThirdPartySetting('canvas_pattern_components', 'links');
+    $pattern->save();
+    $this->generateComponentConfig();
+    $info = $this->clientInfo();
+    self::assertSame([], $info['patternMappedBundles']);
+    self::assertArrayNotHasKey('ownReferenceRequirement', $info);
+  }
+
+  /**
+   * A new reference on a placement of an unbound Pattern is refused.
+   */
+  public function testNewReferenceOnAnUnboundPlacementIsRefused(): void {
+    $this->createUnboundPattern();
+    $node = $this->createNode('article', 'A');
+    $violations = $this->createPage([self::ref($node)], FALSE)->validate();
+    self::assertGreaterThan(0, $violations->count());
+    self::assertStringContainsString('reference', $violations[0]->getPropertyPath());
+    self::assertCount(0, $this->createPage([NULL], FALSE)->validate());
+  }
+
+  /**
+   * ... but one that was stored before does not stop its page from saving.
+   */
+  public function testStoredReferenceOnAnUnboundPlacementIsKept(): void {
+    $this->createUnboundPattern();
+    $node = $this->createNode('article', 'A');
+    $page = $this->createPage([self::ref($node)]);
+    self::assertCount(0, $page->validate());
   }
 
   private function createUnboundPattern(): void {

@@ -6,14 +6,22 @@ namespace Drupal\canvas_pattern_components\Plugin\Canvas\ComponentSource;
 
 use Drupal\canvas\Attribute\ComponentSource;
 use Drupal\canvas\ComponentSource\ComponentSourceBase;
+use Drupal\canvas\ComponentTreeReference;
 use Drupal\canvas\Entity\Component;
 use Drupal\canvas\Entity\Pattern;
+use Drupal\canvas\LinkTarget;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItem;
+use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList;
+use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemListInstantiatorTrait;
+use Drupal\canvas\TypedData\BetterEntityDataDefinition;
 use Drupal\canvas_pattern_components\ComponentSource\PatternComponentDiscovery;
+use Drupal\canvas_pattern_components\PatternLinks;
 use Drupal\Core\Cache\CacheableMetadata;
 use Drupal\Core\Entity\EntityInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Entity\FieldableEntityInterface;
+use Drupal\Core\Entity\Plugin\DataType\EntityAdapter;
+use Drupal\Core\Entity\TypedData\EntityDataDefinitionInterface;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Plugin\ContainerFactoryPluginInterface;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
@@ -50,6 +58,8 @@ use Symfony\Component\Validator\ConstraintViolationListInterface;
   discoveryCacheTags: ['config:pattern_list'],
 )]
 final class PatternComponent extends ComponentSourceBase implements ContainerFactoryPluginInterface {
+
+  use ComponentTreeItemListInstantiatorTrait;
 
   public const string SOURCE_PLUGIN_ID = 'pattern';
 
@@ -122,10 +132,14 @@ final class PatternComponent extends ComponentSourceBase implements ContainerFac
     if ($pattern === NULL) {
       return [];
     }
-    // Depend on the referenced Pattern config entity. When it is deleted, core
-    // deletes this Component if unused, or converts it to the `fallback` source
-    // if layouts still reference it — so existing trees never break.
+    // Depend on the referenced Pattern config entity only. When it is deleted,
+    // core deletes this Component if unused, or converts it to the `fallback`
+    // source if layouts still reference it — so existing trees never break.
+    // The bundle, fields and adapters a Pattern is bound to are not listed:
+    // the Pattern drops what it can no longer use when they go, and this
+    // Component must outlive that.
     // @see \Drupal\canvas\Entity\Component::onDependencyRemoval()
+    // @see \Drupal\canvas\Entity\Pattern::onDependencyRemoval()
     return ['config' => [$pattern->getConfigDependencyName()]];
   }
 
@@ -153,7 +167,34 @@ final class PatternComponent extends ComponentSourceBase implements ContainerFac
     try {
       // Always render the inner tree opaquely (non-preview), so the pattern
       // behaves as one first-class component regardless of the outer context.
-      $build = $pattern->getComponentTree()->toRenderable($pattern, FALSE);
+      if ($this->getEntityBinding() === NULL) {
+        $build = $pattern->getComponentTree()->toRenderable($pattern, FALSE);
+      }
+      else {
+        // The entity the placement's own reference resolved to, with what its
+        // resolution depends on. Access to view it is already checked.
+        $target = $inputs['entity_target'] ?? NULL;
+        $bound_entity = $target instanceof LinkTarget ? $target->entity : NULL;
+        if ($bound_entity === NULL) {
+          $empty = [];
+          $cacheability = CacheableMetadata::createFromObject($pattern);
+          if ($target instanceof LinkTarget) {
+            $cacheability->addCacheableDependency($target->cacheability);
+          }
+          $cacheability->applyTo($empty);
+          return $empty;
+        }
+        // Same approach as ContentTemplate::build(): the tree's parent is the
+        // entity that its linked props resolve against. The tree's top level
+        // is also covered by a reference to it, like any component under one.
+        $tree = self::staticallyCreateDanglingComponentTreeItemList(\Drupal::typedDataManager(), $bound_entity);
+        $tree->setValue($this->getLinkedComponentTree($pattern, $bound_entity));
+        $build = $tree->toRenderable($pattern, FALSE);
+        CacheableMetadata::createFromRenderArray($build)
+          ->addCacheableDependency($bound_entity)
+          ->addCacheableDependency($target->cacheability)
+          ->applyTo($build);
+      }
     }
     finally {
       unset(self::$renderStack[$pattern_id]);
@@ -179,6 +220,7 @@ final class PatternComponent extends ComponentSourceBase implements ContainerFac
    * {@inheritdoc}
    */
   public function requiresExplicitInput(): bool {
+    // A placement stores no input: the entity it shows is in its reference.
     return FALSE;
   }
 
@@ -192,15 +234,63 @@ final class PatternComponent extends ComponentSourceBase implements ContainerFac
   /**
    * {@inheritdoc}
    */
+  public function getOwnReferenceRequirement(): ?EntityDataDefinitionInterface {
+    $binding = $this->getEntityBinding();
+    return $binding === NULL ? NULL : BetterEntityDataDefinition::create($binding['entity_type_id'], $binding['bundles']);
+  }
+
+  /**
+   * {@inheritdoc}
+   *
+   * A placement of an unbound Pattern shows no entity, so a reference on it
+   * does nothing.
+   */
+  public function refusesOwnReference(): bool {
+    return $this->getEntityBinding() === NULL;
+  }
+
+  /**
+   * {@inheritdoc}
+   *
+   * The entity is the one the placement's own reference points at. A reference
+   * above is not used, and without one of its own the placement shows nothing.
+   */
   public function getExplicitInput(string $uuid, ComponentTreeItem $item, ?FieldableEntityInterface $host_entity = NULL): array {
-    return [];
+    return ['source' => [], 'resolved' => ['entity_target' => $this->resolveOwnReference($uuid, $item, $host_entity)]];
+  }
+
+  /**
+   * Resolves the placement's own reference, if it fits the binding.
+   */
+  private function resolveOwnReference(string $uuid, ComponentTreeItem $item, ?FieldableEntityInterface $host_entity): ?LinkTarget {
+    $requirement = $this->getOwnReferenceRequirement();
+    $list = $item->getParent();
+    if ($requirement === NULL || !$list instanceof ComponentTreeItemList) {
+      return NULL;
+    }
+    $coverage = $list->getNearestReference($uuid);
+    // Only a reference held by the placement itself counts.
+    if ($coverage === NULL || $coverage->holderUuid !== $uuid) {
+      return NULL;
+    }
+    if ($host_entity === NULL) {
+      $root = $item->getRoot();
+      $host_entity = $root instanceof EntityAdapter && $root->getEntity() instanceof FieldableEntityInterface ? $root->getEntity() : NULL;
+    }
+    $target = $list->resolveLinkTarget($uuid, $host_entity);
+    if (!$coverage->fits($requirement)) {
+      // Nothing to show, but what makes it not fit (a field that is changed
+      // to point elsewhere) must still invalidate the empty result.
+      return $target === NULL ? NULL : new LinkTarget(NULL, $target->cacheability);
+    }
+    return $target;
   }
 
   /**
    * {@inheritdoc}
    */
   public function hydrateComponent(array $explicit_input, array $slot_definitions, array $active_required_explicit_inputs): array {
-    return [];
+    return ['entity_target' => $explicit_input['resolved']['entity_target'] ?? NULL];
   }
 
   /**
@@ -223,9 +313,23 @@ final class PatternComponent extends ComponentSourceBase implements ContainerFac
     // instead, and every prop loop on the client becomes a no-op.
     // @see \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList::buildLayoutAndModel()
     // @see ui/src/components/ComponentInstanceForm.tsx (buildPreparedModel)
+    $build = $this->getEntityBinding() === NULL
+      ? $this->renderComponent([], [], $component->uuid(), TRUE)
+      // The description holds its own markup for the name, which is safe.
+      : ['#markup' => $this->getComponentDescription()];
+    // What is advertised below comes from the Pattern, which is not the
+    // Component whose cache tag the list carries, and a Pattern saved outside a
+    // Canvas publish (config import, drush) changes neither the Component nor
+    // its dependencies. Without the Pattern's own tag the cached list would
+    // keep the old mapped bundles.
+    $build['#cache']['tags'] = [...($build['#cache']['tags'] ?? []), ...($this->loadPattern()?->getCacheTags() ?? [])];
     return [
-      'build' => $this->renderComponent([], [], $component->uuid(), TRUE),
+      'build' => $build,
       'propSources' => [],
+      // The bound bundles that have a link or a reference: the editor searches
+      // only these for the content of a placement. Empty for an unbound Pattern,
+      // where the key only says this is a Pattern.
+      'patternMappedBundles' => $this->getMappedTargets(),
     ];
   }
 
@@ -241,11 +345,9 @@ final class PatternComponent extends ComponentSourceBase implements ContainerFac
     ?EntityInterface $entity = NULL,
     array $settings = [],
   ): array {
-    $form['info'] = [
-      '#type' => 'html_tag',
-      '#tag' => 'p',
-      '#value' => $this->t('This is a reusable pattern. Edit the pattern itself to change its content everywhere it is used.'),
-    ];
+    // The entity is chosen with the component's reference, in the Content field
+    // of the editor's Settings tab, which also says the Pattern is edited in
+    // its own editor. Nothing is left to set in this form.
     return $form;
   }
 
@@ -260,7 +362,77 @@ final class PatternComponent extends ComponentSourceBase implements ContainerFac
    * {@inheritdoc}
    */
   public function validateComponentInput(array $inputValues, string $component_instance_uuid, ?FieldableEntityInterface $entity, bool $covered_by_reference = FALSE): ConstraintViolationListInterface {
+    // Nothing is stored in the inputs. The reference is validated with the tree.
     return new ConstraintViolationList();
+  }
+
+  /**
+   * Gets the Pattern's tree with its links applied, for rendering with an entity.
+   *
+   * @return array<int, array<string, mixed>>
+   *   The component tree values.
+   */
+  private function getLinkedComponentTree(Pattern $pattern, FieldableEntityInterface $entity): array {
+    $reference = \sprintf('%s:%s:%s', $entity->getEntityTypeId(), $entity->bundle(), $entity->uuid());
+    // The links of the bundle of this entity; a prop with none keeps its
+    // static value.
+    $links = [];
+    foreach ($pattern->getThirdPartySetting('canvas_pattern_components', 'links', []) as $uuid => $props) {
+      foreach ($props as $prop => $branches) {
+        if (isset($branches[$entity->bundle()])) {
+          $links[$uuid][$prop] = $branches[$entity->bundle()];
+        }
+      }
+    }
+    // The field references of this bundle: what the root-level ones read from is
+    // the entity of the placement.
+    $settings = $pattern->getThirdPartySettings('canvas_pattern_components');
+    $items = ComponentTreeReference::withFieldReferences(
+      \array_values($pattern->get('component_tree')),
+      PatternLinks::getReferencesOf($settings, $entity->bundle()),
+    );
+    $items = PatternLinks::overlayLinks($items, $links);
+    foreach ($items as &$item) {
+      // The top level is covered by a reference to the bound entity, except
+      // for a placement of a bound Pattern: it never inherits, so it keeps its
+      // own pick or shows nothing. A reference an item already has is kept.
+      if (empty($item['parent_uuid']) && empty($item['reference']) && !$this->usesOwnReference((string) $item['component_id'])) {
+        $item['reference'] = $reference;
+      }
+    }
+    return $items;
+  }
+
+  /**
+   * Whether instances of a component use the entity of their own reference.
+   */
+  private function usesOwnReference(string $component_id): bool {
+    $component = $this->entityTypeManager->getStorage(Component::ENTITY_TYPE_ID)->load($component_id);
+    return $component instanceof Component && $component->getComponentSource()->getOwnReferenceRequirement() !== NULL;
+  }
+
+  /**
+   * Gets the entity type and bundle this Pattern declares, if any.
+   *
+   * @return array{entity_type_id: string, bundles: list<string>}|null
+   *   The declaration, or NULL for an unbound Pattern.
+   */
+  private function getEntityBinding(): ?array {
+    $pattern = $this->loadPattern();
+    $type = $pattern === NULL ? NULL : PatternLinks::getEntityTypeId($pattern);
+    return $type === NULL ? NULL : ['entity_type_id' => $type, 'bundles' => PatternLinks::getBundles($pattern)];
+  }
+
+  /**
+   * Gets `entity_type_id:bundle` of each bound bundle that has a link or reference.
+   *
+   * @return list<string>
+   *   Empty when the Pattern is unbound or nothing is mapped.
+   */
+  private function getMappedTargets(): array {
+    $pattern = $this->loadPattern();
+    $type = $pattern === NULL ? NULL : PatternLinks::getEntityTypeId($pattern);
+    return $type === NULL ? [] : \array_map(static fn (string $bundle): string => $type . ':' . $bundle, PatternLinks::getMappedBundles($pattern));
   }
 
   /**

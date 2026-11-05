@@ -7,12 +7,14 @@ namespace Drupal\Tests\canvas_pattern_components\Kernel;
 use Drupal\canvas\AutoSave\AutoSaveManager;
 use Drupal\canvas\Entity\Component;
 use Drupal\canvas\Exception\ConstraintViolationException;
+use Drupal\canvas\Entity\Page;
 use Drupal\canvas\Entity\Pattern;
 use Drupal\canvas\PropExpressions\StructuredData\FieldPropExpression;
 use Drupal\canvas\TypedData\BetterEntityDataDefinition;
 use Drupal\canvas_pattern_components\EventSubscriber\PatternEditorRequestSubscriber;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Extension\ThemeInstallerInterface;
+use Drupal\Core\Render\RendererInterface;
 use Drupal\Core\Url;
 use Drupal\field\Entity\FieldConfig;
 use Drupal\field\Entity\FieldStorageConfig;
@@ -285,6 +287,23 @@ final class PatternRootScopeRouteTest extends ApiLayoutControllerTestBase {
     return $json['html'];
   }
 
+  private function renderPage(Node ...$nodes): string {
+    $tree = [];
+    foreach ($nodes as $delta => $node) {
+      $tree[] = [
+        'uuid' => \sprintf('b3c8f0d2-1111-4a2b-9c3d-%012d', $delta + 1),
+        'component_id' => 'pattern.' . self::PATTERN_ID,
+        'component_version' => Component::load('pattern.' . self::PATTERN_ID)?->getActiveVersion(),
+        'inputs' => [],
+        'reference' => \sprintf('node:%s:%s', $node->bundle(), $node->uuid()),
+      ];
+    }
+    $page = Page::create(['title' => 'Host page', 'components' => $tree]);
+    $page->save();
+    $build = $page->getComponentTree()->toRenderable($page, FALSE);
+    return (string) $this->container->get(RendererInterface::class)->renderInIsolation($build);
+  }
+
   /**
    * Setting the reference of one bundle leaves the other's alone, and switching
    * loses nothing and writes no draft.
@@ -368,6 +387,10 @@ final class PatternRootScopeRouteTest extends ApiLayoutControllerTestBase {
     self::assertInstanceOf(Pattern::class, $stored);
     self::assertSame(self::ownFields(), self::settingsOf($stored)['references']);
     self::assertCount(0, $stored->getTypedData()->validate());
+    $html = $this->renderPage($article, $news);
+    self::assertStringContainsString('Ann', $html);
+    self::assertStringContainsString('Tea', $html);
+    self::assertStringNotContainsString('Static card heading', $html);
   }
 
   /**

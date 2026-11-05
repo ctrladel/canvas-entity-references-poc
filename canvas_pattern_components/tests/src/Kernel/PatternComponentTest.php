@@ -173,7 +173,9 @@ final class PatternComponentTest extends CanvasKernelTestBase {
     // Start with a heading so the component + its active version exist.
     $pattern = $this->createPattern('Self heading');
 
-    // Now make the pattern reference its own component instance too.
+    // Now make the pattern reference its own component instance too. Saving this
+    // is refused, so it is written to storage directly, as a loop that reached
+    // the site some other way would be: rendering must still not recurse.
     $pattern->setComponentTree(self::populateActiveComponentVersionPlaceholders([
       [
         'uuid' => '5f71027b-d9d3-4f3d-8990-a6502c0ba676',
@@ -187,7 +189,10 @@ final class PatternComponentTest extends CanvasKernelTestBase {
         'component_version' => '::ACTIVE_VERSION_IN_SUT::',
         'inputs' => [],
       ],
-    ]))->save();
+    ]));
+    \Drupal::service('config.storage')->write($pattern->getConfigDependencyName(), $pattern->toArray());
+    \Drupal::configFactory()->reset($pattern->getConfigDependencyName());
+    \Drupal::entityTypeManager()->getStorage('pattern')->resetCache();
 
     $page = Page::create([
       'title' => 'Host page',
