@@ -5,3 +5,7 @@ package: Canvas
 core_version_requirement: ^11
 dependencies:
   - canvas:canvas
+  - drupal:node
+  - drupal:text
+  - drupal:image
+  - drupal:file

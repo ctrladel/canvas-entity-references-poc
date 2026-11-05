@@ -1,0 +1,46 @@
+langcode: en
+status: true
+dependencies:
+  config:
+    - field.field.node.product.field_expert
+    - field.field.node.product.field_product_image
+    - field.field.node.product.field_summary
+    - node.type.product
+  module:
+    - image
+id: node.product.default
+targetEntityType: node
+bundle: product
+mode: default
+content:
+  title:
+    type: string_textfield
+    weight: 0
+    region: content
+    settings: { size: 60, placeholder: '' }
+    third_party_settings: {  }
+  field_summary:
+    type: string_textfield
+    weight: 1
+    region: content
+    settings: { size: 60, placeholder: '' }
+    third_party_settings: {  }
+  field_product_image:
+    type: image_image
+    weight: 2
+    region: content
+    settings: { progress_indicator: throbber, preview_image_style: thumbnail }
+    third_party_settings: {  }
+  field_expert:
+    type: entity_reference_autocomplete
+    weight: 3
+    region: content
+    settings: { match_operator: CONTAINS, match_limit: 10, size: 60, placeholder: '' }
+    third_party_settings: {  }
+  status:
+    type: boolean_checkbox
+    weight: 4
+    region: content
+    settings: { display_label: true }
+    third_party_settings: {  }
+hidden: {  }

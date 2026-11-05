@@ -1,0 +1,20 @@
+'$schema': 'https://git.drupalcode.org/project/drupal/-/raw/HEAD/core/assets/schemas/v1/metadata.schema.json'
+name: Testimonial
+description: A quote with a place for who said it.
+status: stable
+group: Content
+props:
+  type: object
+  required:
+    - quote
+  properties:
+    quote:
+      type: string
+      title: Quote
+      description: What was said.
+      examples:
+        - 'It took an afternoon to put the whole page together.'
+slots:
+  attribution:
+    title: Attribution
+    description: Who said it.

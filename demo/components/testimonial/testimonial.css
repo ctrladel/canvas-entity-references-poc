@@ -1,0 +1,21 @@
+.demo-testimonial {
+  --demo-blue: #0678be;
+  --demo-navy: #064771;
+
+  margin: 0;
+  padding: 1.25rem 1.5rem;
+  border-inline-start: 0.35rem solid var(--demo-blue);
+  background: #ffffff;
+}
+
+.demo-testimonial__quote {
+  margin: 0 0 0.75rem;
+  color: var(--demo-navy);
+  font-size: 1.125rem;
+  font-style: italic;
+  line-height: 1.5;
+}
+
+.demo-testimonial__attribution {
+  font-size: 0.875rem;
+}

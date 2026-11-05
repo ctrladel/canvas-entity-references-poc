@@ -1,0 +1,32 @@
+'$schema': 'https://git.drupalcode.org/project/drupal/-/raw/HEAD/core/assets/schemas/v1/metadata.schema.json'
+name: Attribution
+description: The name and role of the person behind a quote.
+status: stable
+group: Content
+props:
+  type: object
+  required:
+    - name
+  properties:
+    name:
+      type: string
+      title: Name
+      description: Who it is.
+      examples:
+        - 'Full name'
+    role:
+      type: string
+      title: Role
+      description: What they do.
+      examples:
+        - 'Job title'
+    photo:
+      $ref: json-schema-definitions://canvas.module/image
+      type: object
+      title: Photo
+      description: A portrait of them.
+      examples:
+        - src: /modules/custom/canvas_demo/images/placeholder.jpg
+          alt: 'Portrait placeholder'
+          width: 480
+          height: 480

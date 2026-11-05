@@ -1,0 +1,55 @@
+'$schema': 'https://git.drupalcode.org/project/drupal/-/raw/HEAD/core/assets/schemas/v1/metadata.schema.json'
+name: Card
+description: A heading and a short text on a tinted background. The tone sets the colour.
+status: stable
+group: Content
+props:
+  type: object
+  required:
+    - heading
+    - tone
+  properties:
+    heading:
+      type: string
+      title: Heading
+      description: The heading of the card.
+      examples:
+        - 'Build with Drupal'
+    body:
+      type: string
+      title: Text
+      description: The text of the card.
+      examples:
+        - 'Compose pages from components, and keep the content where it belongs.'
+    image:
+      $ref: json-schema-definitions://canvas.module/image
+      type: object
+      title: Image
+      description: A picture above the heading.
+      examples:
+        - src: /modules/custom/canvas_demo/images/placeholder.jpg
+          alt: 'Placeholder'
+          width: 480
+          height: 480
+    url:
+      type: string
+      format: uri-reference
+      title: Link
+      description: Where the whole card leads.
+      examples:
+        - /
+    tone:
+      type: string
+      title: Tone
+      description: The colour of the card. The featured tone is for the one card to stand out.
+      default: neutral
+      enum:
+        - neutral
+        - accent
+        - featured
+      meta:enum:
+        neutral: Neutral
+        accent: Accent
+        featured: Featured
+      examples:
+        - neutral

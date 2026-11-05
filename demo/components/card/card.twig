@@ -1,0 +1,13 @@
+<article{{ attributes.addClass('demo-card', 'demo-card--' ~ tone) }}>
+  {% if image.src %}
+    <img class="demo-card__image" src="{{ image.src }}" alt="{{ image.alt }}" width="480" height="480" loading="lazy">
+  {% endif %}
+  <div class="demo-card__content">
+    <h3 class="demo-card__heading">
+      {% if url %}<a class="demo-card__link" href="{{ url }}">{{ heading }}</a>{% else %}{{ heading }}{% endif %}
+    </h3>
+    {% if body %}
+      <p class="demo-card__body">{{ body }}</p>
+    {% endif %}
+  </div>
+</article>

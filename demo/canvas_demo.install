@@ -1,0 +1,78 @@
+<?php
+
+/**
+ * @file
+ * Install hooks of the Canvas demo.
+ */
+
+declare(strict_types=1);
+
+use Drupal\Core\File\FileExists;
+use Drupal\Core\File\FileSystemInterface;
+use Drupal\file\Entity\File;
+use Drupal\node\Entity\Node;
+
+/**
+ * Copies an image of the module into the public files and makes a file of it.
+ *
+ * @return array{target_id: int|string|null, alt: string}
+ *   The value of an image field.
+ */
+function canvas_demo_image(string $name, string $alt): array {
+  $directory = 'public://demo';
+  \Drupal::service('file_system')->prepareDirectory($directory, FileSystemInterface::CREATE_DIRECTORY);
+  $source = \Drupal::service('extension.list.module')->getPath('canvas_demo') . '/images/' . $name;
+  $uri = \Drupal::service('file_system')->copy($source, "$directory/$name", FileExists::Replace);
+  $file = File::create(['uri' => $uri, 'status' => 1]);
+  $file->save();
+  return ['target_id' => $file->id(), 'alt' => $alt];
+}
+
+/**
+ * Implements hook_install().
+ *
+ * Creates the people and products the sample pages show.
+ */
+function canvas_demo_install(): void {
+  $people = [
+    ['Maya Okafor', 'Head of Design', 'The pour-over set made our mornings. Setup took two minutes.', 'maya-okafor.jpg'],
+    ['Daniel Reyes', 'Customer Success Lead', 'Everything arrived well packed, and the notebook lies flat like they promise.', 'daniel-reyes.jpg'],
+    ['Priya Raman', 'Operations Manager', 'We bought the daypacks for the whole team and nobody has complained once.', 'priya-raman.jpg'],
+    ['Tom Lindqvist', 'Field Tester', 'The mug survived a season on the trail without a single chip.', 'tom-lindqvist.jpg'],
+    ['Sara Whitfield', 'Barista Trainer', '', 'sara-whitfield.jpg'],
+  ];
+  $nodes = [];
+  foreach ($people as [$name, $role, $quote, $photo]) {
+    $nodes[$name] = Node::create([
+      'type' => 'person',
+      'title' => $name,
+      'field_role' => $role,
+      'field_quote' => $quote,
+      'field_photo' => canvas_demo_image($photo, "Portrait of $name"),
+      'status' => 1,
+    ]);
+    $nodes[$name]->save();
+  }
+
+  $products = [
+    ['Pour-over set', 'Dripper and server for a slow, clean cup.', 'pour-over-set.jpg', 'Daniel Reyes'],
+    ['Field notebook', 'Dot grid pages in a hard cover that lies flat.', 'field-notebook.jpg', 'Maya Okafor'],
+    ['Canvas daypack', 'Waxed canvas, 18 litres, one big pocket.', 'canvas-daypack.jpg', 'Priya Raman'],
+    ['Desk lamp', 'A jointed arm and a warm, even light.', 'desk-lamp.jpg', 'Tom Lindqvist'],
+    ['Wireless headphones', 'Thirty hours of battery and a folding band.', 'wireless-headphones.jpg', 'Maya Okafor'],
+    ['Enamel mug', 'Chip-resistant and light enough for the trail.', 'enamel-mug.jpg', 'Daniel Reyes'],
+    // No expert: the reference field is empty, so a template falls back to
+    // the example values of the components that read it.
+    ['Travel kettle', 'Boils a mug in two minutes on any camp stove.', 'enamel-mug.jpg', NULL],
+  ];
+  foreach ($products as [$title, $summary, $image, $expert]) {
+    Node::create([
+      'type' => 'product',
+      'title' => $title,
+      'field_summary' => $summary,
+      'field_product_image' => canvas_demo_image($image, $title),
+      'field_expert' => $expert === NULL ? NULL : $nodes[$expert]->id(),
+      'status' => 1,
+    ])->save();
+  }
+}

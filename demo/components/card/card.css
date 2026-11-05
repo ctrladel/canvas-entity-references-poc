@@ -1,0 +1,64 @@
+/* Colours: Drupal Brand Book 2020, "Color palette". */
+.demo-card {
+  --demo-blue: #0678be;
+  --demo-spot-blue: #009cde;
+  --demo-navy: #064771;
+  --demo-ink: #2d2926;
+  --demo-mist: #f6f6f2;
+
+  box-sizing: border-box;
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--demo-blue);
+  border-radius: 0.5rem;
+  background: var(--demo-mist);
+  color: var(--demo-ink);
+}
+
+.demo-card__image {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 10;
+  max-height: 11rem;
+  object-fit: cover;
+  object-position: 50% 30%;
+}
+
+.demo-card__content {
+  padding: 1rem 1.25rem 1.25rem;
+}
+
+.demo-card__heading {
+  margin: 0 0 0.5rem;
+  color: var(--demo-navy);
+  font-size: 1.25rem;
+}
+
+.demo-card__link {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--demo-spot-blue);
+  text-underline-offset: 0.2em;
+}
+
+.demo-card__body {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.demo-card--accent {
+  border-color: var(--demo-spot-blue);
+  background: #ffffff;
+  box-shadow: inset 0.35rem 0 0 var(--demo-spot-blue);
+}
+
+.demo-card--featured {
+  border-color: var(--demo-navy);
+  background: var(--demo-blue);
+  color: #ffffff;
+}
+
+.demo-card--featured .demo-card__heading {
+  color: #ffffff;
+}

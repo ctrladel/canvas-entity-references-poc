@@ -1,0 +1,7 @@
+<p{{ attributes.addClass('demo-attribution') }}>
+  {% if photo.src %}<img class="demo-attribution__photo" src="{{ photo.src }}" alt="{{ photo.alt }}" width="48" height="48">{% endif %}
+  <span class="demo-attribution__text">
+    <strong class="demo-attribution__name">{{ name }}</strong>
+    {% if role %}<span class="demo-attribution__role">{{ role }}</span>{% endif %}
+  </span>
+</p>
