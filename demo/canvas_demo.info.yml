@@ -1,0 +1,7 @@
+name: Canvas demo
+type: module
+description: Sample components and content for trying the stacked Canvas branches by hand.
+package: Canvas
+core_version_requirement: ^11
+dependencies:
+  - canvas:canvas

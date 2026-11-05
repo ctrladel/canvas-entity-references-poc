@@ -1,0 +1,8 @@
+# The Composer project around canvas/, canvas_pattern_components/ and demo/.
+/vendor/
+/web/
+/drush/
+/recipes/
+/.phpunit.cache/
+/.ddev/.*
+/.ddev/db_snapshots/

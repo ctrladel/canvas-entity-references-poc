@@ -1,0 +1,3 @@
+# Build output of the Canvas UI: collapsed in pull request diffs.
+canvas/ui/dist/** linguist-generated=true
+canvas/packages/*/dist/** linguist-generated=true

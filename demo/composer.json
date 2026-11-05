@@ -1,0 +1,9 @@
+{
+    "name": "local/canvas_demo",
+    "description": "Sample components and content for trying the stacked Canvas branches by hand.",
+    "type": "drupal-custom-module",
+    "license": "GPL-2.0-or-later",
+    "require": {
+        "drupal/canvas": "*"
+    }
+}
