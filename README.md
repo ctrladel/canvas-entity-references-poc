@@ -6,6 +6,10 @@ These PRs aren't merge candidates. The goal is to explore this approach and whet
 
 The discussion is in [#3585135](https://git.drupalcode.org/project/canvas/-/work_items/3585135). The comment there has the summary and the open questions: [link to comment].
 
+## Demo
+
+[The demo video](docs/demo/canvas-live-patterns-demo.mp4) (4:41) walks through the four pieces in order on the demo site. GitHub opens it as a file, so download it or use View raw to play it.
+
 ## What's in this repo
 
 `canvas/` is Canvas 1.x (c37da212) and `canvas_pattern_components/` is [Canvas Pattern Components](https://www.drupal.org/project/canvas_pattern_components) 1.0.x (49dd297), side by side. `main` is both, unmodified. Four stacked branches, each with a draft PR, add the work. The root has a ddev project and a composer file that put the two together into a site.
