@@ -365,4 +365,26 @@ final class PatternExposureRouteTest extends ApiLayoutControllerTestBase {
     self::assertSame(['heading'], \array_keys($this->getDraft()?->getThirdPartySetting('canvas_pattern_components', 'exposed') ?? []));
   }
 
+  /**
+   * Unlinking the Pattern from content leaves the overrides inert, and the
+   * confirmation of the binding change says how many placements have some.
+   */
+  public function testUnbindingSaysHowManyPlacementsHaveOverrides(): void {
+    $this->setUpCurrentUser([], [Page::EDIT_PERMISSION, Pattern::ADMIN_PERMISSION, AutoSaveManager::PUBLISH_PERMISSION, 'access content', 'link component props to content']);
+    $this->createOverridePattern(['heading' => self::exposure(self::HEADING, 'text', 'Heading')]);
+    $node = Node::create(['type' => 'article', 'title' => 'T', 'status' => 1]);
+    $node->save();
+    $this->placeOnPage(['heading' => self::textOverride('Special')], $node);
+    $this->placeOnPage([], $node);
+    $url = Url::fromRoute('canvas_pattern_components.binding.set', ['entity' => self::PATTERN_ID])->toString();
+    $answer = self::decodeResponse($this->request(Request::create($url, 'POST', content: \json_encode(['targets' => []], JSON_THROW_ON_ERROR))));
+    self::assertSame('confirmation_required', $answer['status']);
+    self::assertSame(1, $answer['overrides']);
+    self::assertStringContainsString('1 placement has overridden props that will stop applying until the pattern is linked to content again.', $answer['message']);
+    $answer = self::decodeResponse($this->request(Request::create($url, 'POST', content: \json_encode(['targets' => [], 'confirm' => TRUE], JSON_THROW_ON_ERROR))));
+    self::assertSame([], $answer['targets']);
+    // The exposure is kept in the draft, so linking again brings the overrides back.
+    self::assertSame(['heading'], \array_keys($this->getDraft()?->getThirdPartySetting('canvas_pattern_components', 'exposed') ?? []));
+  }
+
 }

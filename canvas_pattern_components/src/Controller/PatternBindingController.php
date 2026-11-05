@@ -13,6 +13,7 @@ use Drupal\canvas\ComponentTreeLinkGuard;
 use Drupal\canvas\Entity\Pattern;
 use Drupal\canvas\Storage\ComponentTreeLoader;
 use Drupal\canvas\TypedData\BetterEntityDataDefinition;
+use Drupal\canvas_pattern_components\PatternExposures;
 use Drupal\canvas_pattern_components\PatternLinks;
 use Drupal\Core\Session\AccountInterface;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -85,12 +86,16 @@ final class PatternBindingController {
       $gone = $type_changes || $targets === [] ? NULL : \array_map(static fn (string $target): string => \explode(':', $target, 2)[1], $removed);
       $links = PatternLinks::countLinks($editing, $gone);
       $placements = $this->countAffectedPlacements($entity, $current, $targets);
-      if (($links > 0 || $placements > 0) && !$confirm) {
+      // Without a binding nothing is overridden: the overrides are kept, and
+      // apply again when the Pattern is linked to content again.
+      $overrides = $targets === [] ? $this->countPlacementsWithOverrides($entity) : 0;
+      if (($links > 0 || $placements > 0 || $overrides > 0) && !$confirm) {
         return new JsonResponse([
           'status' => self::CONFIRMATION_REQUIRED,
           'links' => $links,
           'placements' => $placements,
-          'message' => self::warning($links, $placements, $targets === [], $type_changes, $this->labelsOf($removed)),
+          'overrides' => $overrides,
+          'message' => self::warning($links, $placements, $targets === [], $type_changes, $this->labelsOf($removed), $overrides),
         ]);
       }
     }
@@ -204,6 +209,36 @@ final class PatternBindingController {
   }
 
   /**
+   * Counts the live placements that hold an override of an exposed prop.
+   *
+   * Placements that exist only in drafts are not counted, so this is a minimum.
+   */
+  private function countPlacementsWithOverrides(Pattern $stored): int {
+    $component = Component::load('pattern.' . $stored->id());
+    if (!$component instanceof Component) {
+      return 0;
+    }
+    $names = \array_keys(PatternExposures::get($stored));
+    if ($names === []) {
+      return 0;
+    }
+    $hosts = [
+      ...$this->componentAudit->getContentRevisionsUsingAuditTarget($component, [], RevisionAuditEnum::Default),
+      ...$this->componentAudit->getConfigEntityDependenciesUsingAuditTarget($component, ContentTemplate::ENTITY_TYPE_ID),
+      ...$this->componentAudit->getConfigEntityDependenciesUsingAuditTarget($component, Pattern::ENTITY_TYPE_ID),
+    ];
+    $count = 0;
+    foreach ($hosts as $host) {
+      foreach ($this->componentTreeLoader->load($host) as $item) {
+        if ($item->getComponentId() === $component->id() && \array_intersect_key($item->getInputs() ?? [], \array_flip($names)) !== []) {
+          $count++;
+        }
+      }
+    }
+    return $count;
+  }
+
+  /**
    * Gets the labels of bundles, `entity_type_id:bundle` as given.
    *
    * @param list<string> $targets
@@ -221,8 +256,11 @@ final class PatternBindingController {
    * @param list<string> $removed
    *   The labels of the bundles that go.
    */
-  private static function warning(int $links, int $placements, bool $removing, bool $typeChanges, array $removed): string {
+  private static function warning(int $links, int $placements, bool $removing, bool $typeChanges, array $removed, int $overrides = 0): string {
     $lines = ['Nothing changes on the live site until you publish.'];
+    if ($overrides > 0) {
+      $lines[] = \sprintf('%d %s overridden props that will stop applying until the pattern is linked to content again.', $overrides, $overrides === 1 ? 'placement has' : 'placements have');
+    }
     if ($links > 0) {
       $lines[] = $links === 1
         ? '1 linked prop returns to its static value.'

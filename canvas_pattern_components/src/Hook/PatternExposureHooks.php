@@ -60,4 +60,26 @@ final class PatternExposureHooks {
     }
   }
 
+  /**
+   * Implements hook_theme().
+   */
+  #[Hook('theme')]
+  public function theme(): array {
+    return [
+      // The state of an exposed prop in the form of a placement of a Pattern.
+      'canvas_prop_override_state' => [
+        'variables' => [
+          'variant' => 'inherited',
+          'prop_name' => NULL,
+          'title' => NULL,
+          'source' => 'pattern',
+          'reason' => '',
+          'display' => '',
+          'seed' => '',
+        ],
+        'template' => 'canvas-prop-override-state',
+      ],
+    ];
+  }
+
 }
