@@ -30,9 +30,11 @@ canvas.pattern.*.third_party.canvas_pattern_components:
     FullyValidatable: ~
     PatternBinding: ~
     PatternReferences: ~
+    PatternExposures: ~
   mapping:
-    # The three keys of the binding go together, or none is there. They are not
-    # required one by one: the PatternBinding constraint says what is missing.
+    # The three keys of the binding go together, or none is there: a Pattern
+    # with no binding can have exposed props. The PatternBinding constraint
+    # holds them to that.
     entity_type_id:
       requiredKey: false
       type: string
@@ -63,6 +65,29 @@ canvas.pattern.*.third_party.canvas_pattern_components:
           sequence:
             # By the kind of prop source, which decides which keys it has.
             type: canvas_pattern_components.link.[sourceType]
+    exposed:
+      requiredKey: false
+      type: sequence
+      label: 'Exposed props, keyed by the name a placement overrides them under'
+      sequence:
+        type: mapping
+        label: 'An exposed prop of an inner component instance'
+        constraints:
+          FullyValidatable: ~
+        mapping:
+          uuid:
+            type: uuid
+            label: 'Inner component instance UUID'
+          prop:
+            type: string
+            label: 'Prop name'
+            constraints:
+              NotBlank: []
+          label:
+            type: label
+            label: 'Label'
+            constraints:
+              NotBlank: []
     references:
       requiredKey: false
       type: sequence
