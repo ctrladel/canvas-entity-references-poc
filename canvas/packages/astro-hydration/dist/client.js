@@ -1,0 +1,1 @@
+import{t as e}from"./client2.js";export{e as default};
