@@ -210,6 +210,20 @@ abstract class ComponentSourceBase extends PluginBase implements ComponentSource
   /**
    * {@inheritdoc}
    */
+  public function exposesInputToClient(ComponentTreeItem $item): bool {
+    return $this->requiresExplicitInput();
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function getInputSchemaRefs(): array {
+    return [];
+  }
+
+  /**
+   * {@inheritdoc}
+   */
   public function optimizeExplicitInput(array $values): array {
     // Nil-op.
     return $values;

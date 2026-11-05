@@ -138,7 +138,7 @@ final class ComponentTreeItemList extends FieldItemList implements RenderableInt
       // @see EvaluatedComponentModel type-script definition.
       $source = $item->getComponent()?->getComponentSource();
       \assert($source instanceof ComponentSourceInterface);
-      if ($source->requiresExplicitInput()) {
+      if ($source->exposesInputToClient($item)) {
         $built['model'][$component_instance_uuid] = $source->inputToClientModel($source->getExplicitInput($component_instance_uuid, $item, $host_entity));
       }
 

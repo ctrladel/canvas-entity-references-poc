@@ -163,6 +163,13 @@ function canvas_stark_theme(array $existing, string $type, string $theme, string
       ],
       'template' => 'form/prop-linker',
     ],
+    // The controls a module hands the label of a prop as data, as JSON.
+    'prop_label_controls' => [
+      'variables' => [
+        'prop_label_data' => NULL,
+      ],
+      'template' => 'form/prop-label-controls',
+    ],
     // Results in a box that represents a linked prop, replacing a form input.
     'linked_field_box' => [
       'variables' => [
@@ -194,7 +201,9 @@ function canvas_stark_preprocess_field_multiple_value_form(array &$variables): v
     $variables['attributes']['data-canvas-row-count'] = $row_count;
   }
 
-  if (isset($variables['element']['#prop_link_data']) && !empty($variables['multiple'])) {
+  $has_link_data = isset($variables['element']['#prop_link_data']);
+  $has_label_data = isset($variables['element']['#prop_label_data']);
+  if (($has_link_data || $has_label_data) && !empty($variables['multiple'])) {
     $old_data = $variables['table']['#header'][0]['data'];
     $variables['table']['#header'][0]['data'] = [
       '#type' => 'container',
@@ -202,13 +211,21 @@ function canvas_stark_preprocess_field_multiple_value_form(array &$variables): v
         'class' => ['canvas-linked-prop-label-wrapper--multiple-values'],
       ],
       'h4' => $old_data,
-      'linker' => [
+    ];
+    if ($has_link_data) {
+      $variables['table']['#header'][0]['data']['linker'] = [
         '#theme' => 'prop_linker',
         '#linked' => $variables['element']['#prop_link_data']['linked'],
         '#prop_name' => $variables['element']['#prop_link_data']['prop_name'],
         '#suggestions' => $variables['element']['#prop_link_data']['suggestions'],
-      ],
-    ];
+      ];
+    }
+    if ($has_label_data) {
+      $variables['table']['#header'][0]['data']['label_controls'] = [
+        '#theme' => 'prop_label_controls',
+        '#prop_label_data' => $variables['element']['#prop_label_data'],
+      ];
+    }
   }
 
   if (isset($variables['table']['#header'][0]['data'])) {
@@ -300,6 +317,10 @@ function canvas_stark_preprocess_form_element(array &$variables): void {
  * @see ui/src/components/form/components/DefaultImagePreview.tsx
  */
 function canvas_stark_preprocess_fieldset__media_library_widget(array &$variables): void {
+  // Data a form alteration handed the label of the prop, as a string.
+  if (isset($variables['element']['#prop_label_data'])) {
+    $variables['prop_label_data'] = $variables['element']['#prop_label_data'];
+  }
   // Prop link data is passed to the media library widget differently, as the
   // label is the fieldset legend, not a label element.
   if (isset($variables['element']['#prop_link_data'])) {
@@ -312,12 +333,20 @@ function canvas_stark_preprocess_fieldset__media_library_widget(array &$variable
 }
 
 function canvas_stark_preprocess_fieldset(array &$variables): void {
+  // Data a form alteration handed the label of the prop, as a string.
+  if (isset($variables['element']['#prop_label_data'])) {
+    $variables['prop_label_data'] = $variables['element']['#prop_label_data'];
+  }
   if (isset($variables['element']['#prop_link_data'])) {
     $variables['prop_link_data'] = Json::encode($variables['element']['#prop_link_data']);
   }
 }
 
 function canvas_stark_preprocess_datetime_wrapper(array &$variables): void {
+  // Data a form alteration handed the label of the prop, as a string.
+  if (isset($variables['element']['#prop_label_data'])) {
+    $variables['prop_label_data'] = $variables['element']['#prop_label_data'];
+  }
   if (isset($variables['element']['#prop_link_data'])) {
     $variables['prop_link_data'] = Json::encode($variables['element']['#prop_link_data']);
   }
