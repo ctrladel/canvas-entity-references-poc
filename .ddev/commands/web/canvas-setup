@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+
+## Description: Install the sandbox site with sample content
+## Usage: canvas-setup [fresh]
+## Example: ddev canvas-setup
+
+# Run this after `ddev start`, and again after switching branch: it installs
+# the site the first time, and every time it clears the caches that hold what the
+# branch changed (config schema, plugin and container caches) and runs the
+# scripts of the demo module that the branch has.
+#
+# The branches have no update path for data of an earlier branch (the component
+# tree field of tree-references and later has a `reference` column that main's
+# does not): `ddev canvas-setup fresh` drops the database first and starts over.
+set -eu
+cd /var/www/html
+
+composer install --no-interaction
+
+# Needs drush, so it comes after composer install: a first run has no vendor/.
+if [ "${1:-}" = fresh ]; then
+  drush sql:drop --yes
+fi
+
+if ! drush status --field=bootstrap 2>/dev/null | grep -q Successful; then
+  drush site:install standard --yes --account-name=admin --account-pass=admin --site-name="Canvas stack"
+fi
+drush pm:enable canvas canvas_pattern_components canvas_demo --yes
+
+# Modules and branches change config schema, plugins and services.
+drush cache:rebuild
+
+for script in web/modules/custom/canvas_demo/setup/*.php; do
+  echo "== ${script##*/}"
+  drush php:script "$script"
+done
+
+drush cache:rebuild
+echo
+echo "Sign in as admin / admin, or:"
+drush user:login --uri="${DDEV_PRIMARY_URL}"
+echo "Canvas: ${DDEV_PRIMARY_URL}/canvas"
