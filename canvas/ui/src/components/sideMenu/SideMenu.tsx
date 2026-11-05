@@ -76,7 +76,8 @@ export const SideMenu: React.FC<SideMenuProps> = () => {
   const segments = pathname.split('/').filter(Boolean); // removes empty strings
   const hasActiveEditorFrame =
     (segments.includes('editor') && params.entityId !== undefined) ||
-    (segments.includes('template') && params.previewEntityId !== undefined);
+    (segments.includes('template') && params.previewEntityId !== undefined) ||
+    (segments.includes('pattern') && params.patternId !== undefined);
   const isOnExtensionPage = segments[0] === 'app';
 
   const closeExtension = useCallback(() => {
