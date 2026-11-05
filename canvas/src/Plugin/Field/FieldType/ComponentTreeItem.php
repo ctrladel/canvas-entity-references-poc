@@ -70,6 +70,7 @@ use Symfony\Component\Validator\ConstraintViolationList;
       // reference covers: its own, or an ancestor's. Choosing the entity it
       // links to is a separate permission, so the decision stays with someone
       // who may make it.
+      // @see \Drupal\canvas\ComponentTreeLinkGuard
       // @see https://www.drupal.org/project/canvas/issues/3455629
       'inputs' => [
         'absence' => [

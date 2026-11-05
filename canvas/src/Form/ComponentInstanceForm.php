@@ -6,6 +6,7 @@ namespace Drupal\canvas\Form;
 
 use Drupal\canvas\ComponentSource\ComponentSourceInterface;
 use Drupal\canvas\ComponentSource\ComponentSourceManager;
+use Drupal\canvas\ComponentTreeLinkGuard;
 use Drupal\canvas\ComponentTreeReference;
 use Drupal\canvas\ComponentTreeReferenceTargets;
 use Drupal\canvas\Entity\Component;
@@ -49,6 +50,7 @@ final class ComponentInstanceForm extends FormBase {
     protected ThemeHandlerInterface $themeHandler,
     protected ComponentSourceManager $componentSourceManager,
     protected ComponentTreeReferenceTargets $referenceTargets,
+    protected ComponentTreeLinkGuard $linkGuard,
   ) {}
 
   /**
@@ -65,6 +67,7 @@ final class ComponentInstanceForm extends FormBase {
       $container->get(ThemeHandlerInterface::class),
       $component_source_manager,
       $container->get(ComponentTreeReferenceTargets::class),
+      $container->get(ComponentTreeLinkGuard::class),
     );
   }
 
@@ -128,6 +131,9 @@ final class ComponentInstanceForm extends FormBase {
     if ($link_target_param !== '') {
       [$link_type, $link_bundle] = \explode(':', $link_target_param);
       $form_state->set('canvas_link_target', EntityDataDefinition::create($link_type, $link_bundle));
+      // Without the permission, links that exist are shown but not offered or
+      // changed.
+      $form_state->set('canvas_may_link', $this->linkGuard->mayLink($this->currentUser()));
       $host_entity = ComponentTreeReference::createStandIn($link_type, $link_bundle);
     }
     $tree = $request->request->getString('form_canvas_tree');

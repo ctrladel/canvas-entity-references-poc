@@ -42,6 +42,7 @@ final class OwnReferenceRequirementTest extends ApiLayoutControllerTestBase {
   use AutoSaveRequestTestTrait;
   use DataProviderWithComponentTreeTrait;
 
+  private const string LINK_PERMISSION = 'link component props to content';
   private const string PUBLISH_PERMISSION = 'publish auto-saves';
   private const string OWN = 'test_own_reference.card';
   private const string HEADING = 'sdc.canvas_test_sdc.heading';
@@ -68,7 +69,7 @@ final class OwnReferenceRequirementTest extends ApiLayoutControllerTestBase {
   }
 
   private function signIn(bool $may_link): void {
-    $this->setUpCurrentUser([], ['edit any article content', self::PUBLISH_PERMISSION, 'access content']);
+    $this->setUpCurrentUser([], ['edit any article content', self::PUBLISH_PERMISSION, 'access content', ...($may_link ? [self::LINK_PERMISSION] : [])]);
   }
 
   private function createNode(string $type, string $title): Node {
@@ -152,6 +153,58 @@ final class OwnReferenceRequirementTest extends ApiLayoutControllerTestBase {
     $components = \json_decode((string) $response->getContent(), TRUE);
     self::assertSame(['node:article'], $components[self::OWN]['ownReferenceRequirement']);
     self::assertArrayNotHasKey('ownReferenceRequirement', $components[self::HEADING]);
+  }
+
+  /**
+   * Without the permission to link, the content can be chosen, changed, removed.
+   */
+  public function testChoosingTheContentNeedsNoPermissionToLink(): void {
+    $this->storeTree([self::item(self::P, self::OWN, reference: self::ref($this->alpha)), self::heading(self::H)]);
+    $response = $this->postLayout(function (array &$nodes): void {
+      $nodes[0]['reference'] = self::ref($this->beta);
+    });
+    self::assertSame(Response::HTTP_OK, $response->getStatusCode());
+    self::assertSame(self::ref($this->beta), $this->currentItems()[self::P]['reference']);
+    $response = $this->postLayout(static function (array &$nodes): void {
+      unset($nodes[0]['reference']);
+    });
+    self::assertSame(Response::HTTP_OK, $response->getStatusCode());
+  }
+
+  /**
+   * ... but a reference on any other component still does.
+   */
+  public function testAnotherComponentStillNeedsThePermission(): void {
+    $this->storeTree([self::item(self::P, self::OWN), self::heading(self::H)]);
+    $this->assertRefused(
+      fn () => $this->postLayout(function (array &$nodes): void {
+        $nodes[1]['reference'] = self::ref($this->alpha);
+      }),
+      self::LINK_PERMISSION,
+    );
+  }
+
+  /**
+   * Changing the component of an instance does not carry its reference past.
+   */
+  public function testSwappingTheComponentIsNotAWayAround(): void {
+    $this->storeTree([self::item(self::P, self::OWN, reference: self::ref($this->alpha)), self::heading(self::H)]);
+    $this->assertRefused(
+      fn () => $this->postLayout(function (array &$nodes, array &$model): void {
+        $nodes[0]['type'] = $this->activeType(self::HEADING);
+        $model[self::P] = $model[self::H];
+      }),
+      self::LINK_PERMISSION,
+    );
+    // And a linked component cannot become one that uses its own reference.
+    $this->storeTree([self::item(self::P, self::OWN), self::heading(self::H, self::ref($this->alpha))]);
+    $this->assertRefused(
+      fn () => $this->postLayout(function (array &$nodes, array &$model): void {
+        $nodes[1]['type'] = $this->activeType(self::OWN);
+        unset($model[self::H]);
+      }),
+      self::LINK_PERMISSION,
+    );
   }
 
   /**

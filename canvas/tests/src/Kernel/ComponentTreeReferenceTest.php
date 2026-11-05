@@ -63,6 +63,7 @@ final class ComponentTreeReferenceTest extends ApiLayoutControllerTestBase {
   use AutoSaveRequestTestTrait;
   use DataProviderWithComponentTreeTrait;
 
+  private const string LINK_PERMISSION = 'link component props to content';
   private const string PUBLISH_PERMISSION = 'publish auto-saves';
   private const string CARD = 'sdc.canvas_test_sdc.props-slots';
   private const string HEADING = 'sdc.canvas_test_sdc.heading';
@@ -96,7 +97,7 @@ final class ComponentTreeReferenceTest extends ApiLayoutControllerTestBase {
     Role::load('anonymous')?->grantPermission('access content')->save();
     $this->alpha = $this->createNode('article', 'Alpha title');
     $this->beta = $this->createNode('article', 'Beta title');
-    $this->setUpCurrentUser([], ['edit any article content', self::PUBLISH_PERMISSION, 'access content', 'access user profiles']);
+    $this->setUpCurrentUser([], ['edit any article content', self::LINK_PERMISSION, self::PUBLISH_PERMISSION, 'access content', 'access user profiles']);
   }
 
   private function createNode(string $type, string $title, bool $published = TRUE): Node {
@@ -561,7 +562,7 @@ final class ComponentTreeReferenceTest extends ApiLayoutControllerTestBase {
 
   public function testPreviewFallbackDataRevealsNothingAboutInaccessibleEntity(): void {
     $this->storeEmptyRequiredLink('denied');
-    $this->setUpCurrentUser([], ['edit any article content']);
+    $this->setUpCurrentUser([], ['edit any article content', self::LINK_PERMISSION]);
     $data = $this->getLayout();
     self::assertSame(['heading'], $data['model'][self::A]['linkFallbacks']);
     self::assertStringNotContainsString('Hidden title', (string) \json_encode($data));
@@ -989,6 +990,163 @@ final class ComponentTreeReferenceTest extends ApiLayoutControllerTestBase {
 
   // Permission.
 
+  public function testPermissionExists(): void {
+    $permissions = $this->container->get('user.permissions')->getPermissions();
+    self::assertArrayHasKey(self::LINK_PERMISSION, $permissions);
+  }
+
+  public function testPostWithoutPermissionCannotAddChangeOrRemoveReference(): void {
+    $this->storeTree($this->standardTree());
+    $this->setUpCurrentUser([], ['edit any article content']);
+    foreach ([
+      'add' => [self::S, $this->refTo($this->beta)],
+      'change' => [self::A, $this->refTo($this->beta)],
+      'remove' => [self::D, NULL],
+    ] as $label => [$uuid, $reference]) {
+      try {
+        $this->postLayout(function (array &$components) use ($uuid, $reference) {
+          self::setNodeReference($components, $uuid, $reference);
+        });
+        self::fail("Expected a 403 when trying to $label a reference");
+      }
+      catch (AccessDeniedHttpException $e) {
+        self::assertStringContainsString(self::LINK_PERMISSION, $e->getMessage(), $label);
+      }
+    }
+    // Nothing changed.
+    self::assertSame($this->refTo($this->alpha), $this->currentItem(self::A)['reference']);
+    self::assertSame($this->refTo($this->beta), $this->currentItem(self::D)['reference']);
+    self::assertEmpty($this->currentItem(self::S)['reference'] ?? NULL);
+  }
+
+  public function testPatchWithoutPermissionCannotAddChangeOrRemoveLink(): void {
+    $this->storeTree([
+      self::item(self::A, self::CARD, ['heading' => self::link()], reference: $this->refTo($this->alpha)),
+      self::item(self::B, self::HEADING, ['text' => 'Static', 'element' => 'h2'], self::A, 'the_body'),
+    ]);
+    $this->setUpCurrentUser([], ['edit any article content']);
+    // Add: B's static text becomes a link.
+    $added = $this->serverModel(self::B);
+    $added['source']['text'] = ['sourceType' => 'entity-field', 'expression' => self::TITLE];
+    $added['resolved']['text'] = NULL;
+    $this->assertForbidden(fn () => $this->patchModel(self::B, self::HEADING, $added), 'add');
+    // Change: A's link points at another field expression.
+    $this->assertForbidden(fn () => $this->patchModel(self::A, self::CARD, self::linkedHeadingModel('ℹ︎␜entity:node:article␝revision_log␞␟value')), 'change');
+    // Remove: A's link becomes static.
+    $this->assertForbidden(fn () => $this->patchModel(self::A, self::CARD, self::staticHeadingModel('Now static')), 'remove');
+    self::assertSame('entity-field', $this->currentItem(self::A)['inputs']['heading']['sourceType']);
+    self::assertSame('Static', $this->currentItem(self::B)['inputs']['text']);
+  }
+
+  private function assertForbidden(callable $request, string $label): void {
+    try {
+      $request();
+      self::fail("Expected a 403 for: $label");
+    }
+    catch (AccessDeniedHttpException $e) {
+      self::assertStringContainsString(self::LINK_PERMISSION, $e->getMessage(), $label);
+    }
+  }
+
+  public function testWithoutPermissionExistingLinksRenderAndSurviveOtherEdits(): void {
+    $this->storeTree([
+      self::item(self::A, self::CARD, ['heading' => self::link()], reference: $this->refTo($this->alpha)),
+      self::item(self::B, self::HEADING, ['text' => self::link(), 'element' => 'h2'], self::A, 'the_body'),
+    ]);
+    $this->setUpCurrentUser([], ['edit any article content', self::PUBLISH_PERMISSION, 'access content']);
+    // They render.
+    self::assertSame('Alpha title', $this->serverModel(self::B)['resolved']['text']);
+    self::assertStringContainsString('Alpha title', $this->renderHost());
+    // Editing another prop of a linked component leaves its links and the
+    // reference alone: the client sends the model back as it received it.
+    $model = $this->serverModel(self::B);
+    $model['source']['element']['value'] = 'h5';
+    $model['resolved']['element'] = 'h5';
+    $response = $this->patchModel(self::B, self::HEADING, $model);
+    self::assertSame(200, $response->getStatusCode());
+    self::assertSame('h5', $this->currentItem(self::B)['inputs']['element']);
+    self::assertSame('entity-field', $this->currentItem(self::B)['inputs']['text']['sourceType']);
+    self::assertSame($this->refTo($this->alpha), $this->currentItem(self::A)['reference']);
+    // And so does posting the whole layout unchanged.
+    $response = $this->postLayout(static function (array &$components) {});
+    self::assertSame(200, $response->getStatusCode());
+    self::assertSame($this->refTo($this->alpha), $this->currentItem(self::A)['reference']);
+    self::assertSame('entity-field', $this->currentItem(self::A)['inputs']['heading']['sourceType']);
+    // Publishing with the links unchanged is allowed too.
+    $response = $this->makePublishAllRequest();
+    self::assertSame(200, $response->getStatusCode(), (string) $response->getContent());
+    $this->asAnonymous();
+    self::assertStringContainsString('Alpha title', $this->renderHost());
+  }
+
+  public function testPublishRejectsLinkChangesWithoutPermission(): void {
+    $this->storeTree([
+      self::item(self::A, self::CARD, ['heading' => 'Static card heading'], reference: $this->refTo($this->alpha)),
+    ]);
+    // Someone with the permission links the prop in a draft ...
+    self::assertSame(200, $this->patchModel(self::A, self::CARD, self::linkedHeadingModel())->getStatusCode());
+    // ... a publisher without it cannot publish that change.
+    $this->setUpCurrentUser([], ['edit any article content', self::PUBLISH_PERMISSION, 'access content']);
+    $response = $this->makePublishAllRequest();
+    self::assertSame(422, $response->getStatusCode(), (string) $response->getContent());
+    self::assertStringContainsString(self::LINK_PERMISSION, (string) $response->getContent());
+    // The stored tree is untouched.
+    self::assertSame('Static card heading', $this->host()->get('field_canvas_demo')->get(0)->getInputs()['heading']);
+    // With the permission it publishes.
+    $this->setUpCurrentUser([], ['edit any article content', self::PUBLISH_PERMISSION, self::LINK_PERMISSION, 'access content']);
+    self::assertSame(200, $this->makePublishAllRequest()->getStatusCode());
+  }
+
+  public function testContentTemplateAndPatternEditorKeepTheirPermissions(): void {
+    // A content template editor needs only the template permission to link.
+    $template = $this->getTestEntity(ContentTemplate::ENTITY_TYPE_ID);
+    \assert($template instanceof ContentTemplate);
+    $this->setUpCurrentUser([], [ContentTemplate::ADMIN_PERMISSION, 'edit any article content']);
+    $url = $this->getLayoutUrl($template)->toString();
+    $uuid = self::A;
+    $template->setComponentTree(self::populateActiveComponentVersionPlaceholders([
+      self::item($uuid, self::CARD, ['heading' => 'Static'], reference: $this->refTo($this->beta)),
+    ]));
+    $template->save();
+    $content = [
+      'model' => self::linkedHeadingModel(),
+      'componentType' => self::CARD . '@' . Component::load(self::CARD)->getActiveVersion(),
+      'componentInstanceUuid' => $uuid,
+    ] + $this->getPatchContentsDefaults([$template]);
+    $response = $this->request(Request::create($url, 'PATCH', content: \json_encode($content, JSON_THROW_ON_ERROR)));
+    self::assertSame(200, $response->getStatusCode());
+    self::assertSame('Beta title', self::decodeResponse($response)['model'][$uuid]['resolved']['heading']);
+
+    // The form of a content template offers the linker without the linking
+    // permission; only a page tree's form gates on it.
+    $this->container->get('kernel')->rebuildContainer();
+    $form_url = \Drupal\Core\Url::fromRoute('canvas.api.form.component_instance.content_template', ['entity' => $template->id(), 'preview_entity' => $this->previewEntity->id()])->toString();
+    $component = Component::load(self::CARD);
+    $form = self::decodeResponse($this->request(Request::create($form_url, 'PATCH', [
+      'form_canvas_tree' => \json_encode(['nodeType' => 'component', 'slots' => [], 'type' => self::CARD . '@' . $component->getActiveVersion(), 'uuid' => $uuid], JSON_THROW_ON_ERROR),
+      'form_canvas_props' => \json_encode(self::staticHeadingModel(), JSON_THROW_ON_ERROR),
+      'form_canvas_selected' => $uuid,
+    ])));
+    self::assertStringContainsString('prop_link_data', $form['html']);
+  }
+
+  public function testFormGateHidesLinkerWithoutPermission(): void {
+    $this->storeTree([self::item(self::A, self::CARD, ['heading' => self::link()], reference: $this->refTo($this->alpha))]);
+    $target = ['form_canvas_link_target' => 'node:article'];
+    $this->setUpCurrentUser([], ['edit any article content']);
+    // An unlinked prop is not offered a linker.
+    self::assertFalse(self::offersLinker($this->formRequest(self::B, self::CARD, self::staticHeadingModel(), $target)));
+    // A linked prop is shown, read-only: no unlink control.
+    $linked = $this->formCrawler($this->formRequest(self::A, self::CARD, self::linkedHeadingModel(), $target));
+    self::assertCount(1, $linked->filter('.canvas-linked-prop-wrapper[data-drupal-selector*="-heading-"]'));
+    self::assertCount(0, $linked->filter('drupal-canvas-prop-linker'));
+    // The permission brings both back.
+    $this->setUpCurrentUser([], ['edit any article content', self::LINK_PERMISSION]);
+    self::assertTrue(self::offersLinker($this->formRequest(self::B, self::CARD, self::staticHeadingModel(), $target)));
+    $linked = $this->formCrawler($this->formRequest(self::A, self::CARD, self::linkedHeadingModel(), $target));
+    self::assertCount(1, $linked->filter('drupal-canvas-prop-linker'));
+  }
+
 
   // Fix round 1.
 
@@ -1134,7 +1292,101 @@ final class ComponentTreeReferenceTest extends ApiLayoutControllerTestBase {
 
   // Important 2: moving, duplicating and pasting.
 
+  public function testMovingLinkedInstanceWithoutPermissionIsForbidden(): void {
+    $this->storeTree($this->standardTree());
+    $this->asNonLinker();
+    // B (linked) from A's body, covered by Alpha, into D's footer (Beta).
+    $this->assertForbidden(fn () => $this->moveLayoutNode(self::B, self::D, 'the_footer'), 'move B under Beta');
+    // E (linked) out of D, into A.
+    $this->assertForbidden(fn () => $this->moveLayoutNode(self::E, self::A, 'the_colophon'), 'move E under Alpha');
+    self::assertSame(self::A, $this->currentItem(self::B)['parent_uuid']);
+    self::assertSame(self::D, $this->currentItem(self::E)['parent_uuid']);
+  }
+
+  public function testMovingContainerWithLinkedDescendantsWithoutPermissionIsForbidden(): void {
+    $this->storeTree($this->containerTree());
+    $this->asNonLinker();
+    // C holds no link itself; its descendant B would re-point from Alpha to Beta.
+    $this->assertForbidden(fn () => $this->moveLayoutNode(self::C, self::D, 'the_body'), 'move container');
+    self::assertSame(self::A, $this->currentItem(self::C)['parent_uuid']);
+  }
+
+  public function testMovingUnlinkedInstancesWithoutPermissionIsAllowed(): void {
+    $this->storeTree($this->containerTree());
+    $this->asNonLinker();
+    // A static root sibling into a covered slot.
+    self::assertSame(200, $this->moveLayoutNode(self::S, self::A, 'the_footer')->getStatusCode());
+    self::assertSame(self::A, $this->currentItem(self::S)['parent_uuid']);
+    // A static component within the container, to another slot of it.
+    self::assertSame(200, $this->moveLayoutNode(self::F, self::C, 'the_body')->getStatusCode());
+    self::assertSame('the_body', $this->currentItem(self::F)['slot']);
+    // Reordering within a slot leaves the effective reference alone.
+    self::assertSame(200, $this->postLayout(static function (array &$components) {})->getStatusCode());
+  }
+
+  public function testMovingLinkedInstanceWithPermissionRepointsIt(): void {
+    $this->storeTree($this->standardTree());
+    self::assertSame('Alpha title', $this->serverModel(self::B)['resolved']['text']);
+    self::assertSame(200, $this->moveLayoutNode(self::B, self::D, 'the_footer')->getStatusCode());
+    self::assertSame('Beta title', $this->serverModel(self::B)['resolved']['text']);
+  }
+
+  public function testDuplicatingOrPastingLinkedInstanceWithoutPermissionIsForbidden(): void {
+    $this->storeTree($this->containerTree());
+    $copy = function (string $uuid, string $parent, string $slot, string $suffix = '99') {
+      return $this->postLayout(function (array &$components, array &$model) use ($uuid, $parent, $slot, $suffix) {
+        $node = self::findLayoutNode($components, $uuid);
+        self::assertNotNull($node);
+        self::assertTrue(self::attachLayoutNode($components, $parent, $slot, self::copyLayoutNode($node, $model, $suffix)));
+      });
+    };
+    $this->asNonLinker();
+    // A linked component, a container of linked components, and a top
+    // component with a reference of its own: each creates new links.
+    $this->assertForbidden(fn () => $copy(self::B, self::A, 'the_footer'), 'duplicate linked');
+    $this->assertForbidden(fn () => $copy(self::C, self::A, 'the_footer'), 'duplicate container with linked descendants');
+    $this->assertForbidden(fn () => $copy(self::D, self::A, 'the_footer'), 'paste top component with reference');
+    // Copying what holds no link is normal editing.
+    self::assertSame(200, $copy(self::F, self::C, 'the_body', 'a1')->getStatusCode());
+    // With the permission all of it works.
+    $this->setUpCurrentUser([], ['edit any article content', self::LINK_PERMISSION, 'access content']);
+    self::assertSame(200, $copy(self::C, self::A, 'the_footer', 'a2')->getStatusCode());
+  }
+
+  public function testDeletingLinkedInstancesWithoutPermissionIsAllowed(): void {
+    $this->storeTree($this->containerTree());
+    $this->asNonLinker();
+    $response = $this->postLayout(static function (array &$components) {
+      self::detachLayoutNode($components, self::C);
+      self::detachLayoutNode($components, self::D);
+    });
+    self::assertSame(200, $response->getStatusCode());
+    self::assertCount(2, $this->currentTree());
+  }
+
   // Important 4: hostile and garbage references.
+
+  public function testGarbageReferenceOnPostIsUnprocessableBeforeThePermissionCheck(): void {
+    $this->storeTree($this->standardTree());
+    $uuid = self::SOME_UUID;
+    foreach ([
+      'unknown type' => "foo:bar:$uuid",
+      'not fieldable' => "node_type:article:$uuid",
+      'unknown bundle' => "node:nonexistent:$uuid",
+      'malformed' => 'this is not a reference',
+      'not a uuid' => 'node:article:123',
+      'uppercase' => "NODE:article:$uuid",
+    ] as $label => $reference) {
+      foreach (['linker' => ['edit any article content', self::LINK_PERMISSION], 'non-linker' => ['edit any article content']] as $who => $permissions) {
+        $this->setUpCurrentUser([], $permissions);
+        $this->assertUnprocessable(fn () => $this->postLayout(function (array &$components) use ($reference) {
+          self::setNodeReference($components, self::S, $reference);
+        }), "$label as $who");
+      }
+    }
+    // Nothing was saved.
+    self::assertEmpty($this->currentItem(self::S)['reference'] ?? NULL);
+  }
 
   /**
    * A reference written right, to a content type or bundle that is not there,
@@ -1142,7 +1394,7 @@ final class ComponentTreeReferenceTest extends ApiLayoutControllerTestBase {
    */
   public function testReferenceToAGoneBundleIsRefusedWithThatCause(): void {
     $this->storeTree($this->standardTree());
-    $this->setUpCurrentUser([], ['edit any article content']);
+    $this->setUpCurrentUser([], ['edit any article content', self::LINK_PERMISSION]);
     $uuid = self::SOME_UUID;
     foreach ([
       "node:nonexistent:$uuid" => 'no longer exists',
@@ -1618,7 +1870,7 @@ final class ComponentTreeReferenceTest extends ApiLayoutControllerTestBase {
     }
     self::assertNotEmpty($build['#cache']['tags'] ?? []);
     // In the editor: which props use the example value.
-    $this->setUpCurrentUser([], ['edit any article content', 'access content']);
+    $this->setUpCurrentUser([], ['edit any article content', self::LINK_PERMISSION, 'access content']);
     $model = $this->getLayout()['model'];
     self::assertSame(['heading'], $model[self::B]['linkFallbacks'] ?? NULL, 'Covered: the required prop falls back');
     self::assertArrayNotHasKey('linkFallbacks', $model[self::D], 'An optional prop has no fallback');
@@ -1681,6 +1933,20 @@ final class ComponentTreeReferenceTest extends ApiLayoutControllerTestBase {
       'a path' => ['field:field_related_article.title'],
       'no prefix' => ['field_related_article'],
     ];
+  }
+
+  #[\PHPUnit\Framework\Attributes\DataProvider('providerInvalidFieldPaths')]
+  public function testInvalidFieldPathIsUnprocessableOnPostBeforeThePermissionCheck(string $path): void {
+    $this->relateArticles();
+    $this->addReferenceField('field_related_any', 'Related content', ['article', 'page']);
+    $this->storeTree($this->standardTree());
+    foreach (['linker' => ['edit any article content', self::LINK_PERMISSION], 'non-linker' => ['edit any article content']] as $who => $permissions) {
+      $this->setUpCurrentUser([], $permissions);
+      $this->assertUnprocessable(fn () => $this->postLayout(function (array &$components) use ($path) {
+        self::setNodeReference($components, self::B, $path);
+      }), "$path as $who");
+    }
+    self::assertEmpty($this->currentItem(self::B)['reference'] ?? NULL, 'Nothing was saved');
   }
 
   public function testValidFieldPathIsAcceptedOnPost(): void {
@@ -1802,6 +2068,111 @@ final class ComponentTreeReferenceTest extends ApiLayoutControllerTestBase {
   }
 
   // Permission and moves.
+
+  public function testSettingAFieldReferenceNeedsThePermissionOfAPickedOne(): void {
+    $this->relateArticles();
+    $this->storeTree($this->standardTree());
+    $this->asNonLinker();
+    $this->assertForbidden(fn () => $this->postLayout(function (array &$components) {
+      self::setNodeReference($components, self::B, self::REL);
+    }), 'add a field reference');
+    self::assertEmpty($this->currentItem(self::B)['reference'] ?? NULL);
+    $this->setUpCurrentUser([], ['edit any article content', self::LINK_PERMISSION, 'access content']);
+    self::assertSame(200, $this->postLayout(function (array &$components) {
+      self::setNodeReference($components, self::B, self::REL);
+    })->getStatusCode());
+    // Changing it to a picked one, and removing it, needs it too.
+    $this->asNonLinker();
+    $this->assertForbidden(fn () => $this->postLayout(function (array &$components) {
+      self::setNodeReference($components, self::B, $this->refTo($this->beta));
+    }), 'change to a picked reference');
+    $this->assertForbidden(fn () => $this->postLayout(function (array &$components) {
+      self::setNodeReference($components, self::B, NULL);
+    }), 'remove');
+    self::assertSame(self::REL, $this->currentItem(self::B)['reference']);
+  }
+
+  public function testPublishRejectsAFieldReferenceWithoutPermission(): void {
+    $this->relateArticles();
+    $this->storeTree($this->standardTree());
+    // Someone with the permission puts a field reference in a draft ...
+    self::assertSame(200, $this->postLayout(function (array &$components) {
+      self::setNodeReference($components, self::B, self::REL);
+    })->getStatusCode());
+    // ... a publisher without it cannot publish that change.
+    $this->asNonLinker();
+    $response = $this->makePublishAllRequest();
+    self::assertSame(422, $response->getStatusCode(), (string) $response->getContent());
+    self::assertStringContainsString(self::LINK_PERMISSION, (string) $response->getContent());
+    $this->setUpCurrentUser([], ['edit any article content', self::PUBLISH_PERMISSION, self::LINK_PERMISSION, 'access content']);
+    self::assertSame(200, $this->makePublishAllRequest()->getStatusCode());
+  }
+
+  public function testMovingAFieldReferenceToAnotherScopeNeedsThePermission(): void {
+    $this->relateArticles();
+    // F has a field reference and a link; so does its child. Moving F from
+    // under Alpha to under Beta changes what the field is read from, with no
+    // stored change to F.
+    $this->storeTree([
+      self::item(self::A, self::CARD, ['heading' => 'Static'], reference: $this->refTo($this->alpha)),
+      self::item(self::F, self::CARD, ['heading' => self::link()], self::A, 'the_body', self::REL),
+      self::item(self::E, self::HEADING, ['text' => self::link(), 'element' => 'h3'], self::F, 'the_body'),
+      self::item(self::D, self::CARD, ['heading' => 'Static'], reference: $this->refTo($this->beta)),
+      self::item(self::C, self::CARD, ['heading' => 'Static'], self::A, 'the_footer'),
+    ]);
+    self::assertSame('Beta title', $this->getLayout()['model'][self::E]['resolved']['text']);
+    $this->asNonLinker();
+    $this->assertForbidden(fn () => $this->moveLayoutNode(self::F, self::D, 'the_body'), 'F under Beta');
+    self::assertSame(self::A, $this->currentItem(self::F)['parent_uuid']);
+    // The same for the instance that holds F, when it is the link-less container.
+    $this->storeTree([
+      self::item(self::A, self::CARD, ['heading' => 'Static'], reference: $this->refTo($this->alpha)),
+      self::item(self::C, self::CARD, ['heading' => 'Static'], self::A, 'the_body'),
+      self::item(self::F, self::CARD, ['heading' => self::link()], self::C, 'the_body', self::REL),
+      self::item(self::D, self::CARD, ['heading' => 'Static'], reference: $this->refTo($this->beta)),
+    ]);
+    $this->assertForbidden(fn () => $this->moveLayoutNode(self::C, self::D, 'the_body'), 'container of F under Beta');
+  }
+
+  public function testMovingAFieldReferenceWithinTheSameScopeIsAllowedAndWithPermissionRepointsIt(): void {
+    $this->relateArticles();
+    $this->storeTree([
+      self::item(self::A, self::CARD, ['heading' => 'Static'], reference: $this->refTo($this->alpha)),
+      self::item(self::F, self::CARD, ['heading' => self::link()], self::A, 'the_body', self::REL),
+      self::item(self::D, self::CARD, ['heading' => 'Static'], reference: $this->refTo($this->beta)),
+      self::item(self::C, self::CARD, ['heading' => 'Static'], self::A, 'the_footer'),
+    ]);
+    $this->asNonLinker();
+    // From A's body to C's body: C is under A, so the scope is Alpha still.
+    self::assertSame(200, $this->moveLayoutNode(self::F, self::C, 'the_body')->getStatusCode());
+    self::assertSame('Beta title', $this->getLayout()['model'][self::F]['resolved']['heading']);
+    // With the permission F can go under Beta, and then reads Beta's related article.
+    $this->setUpCurrentUser([], ['edit any article content', self::LINK_PERMISSION, self::PUBLISH_PERMISSION, 'access content']);
+    self::assertSame(200, $this->moveLayoutNode(self::F, self::D, 'the_body')->getStatusCode());
+    self::assertSame(self::GAMMA_TITLE, $this->getLayout()['model'][self::F]['resolved']['heading']);
+  }
+
+  public function testContentTemplateFieldReferenceNeedsOnlyTheTemplatePermission(): void {
+    $this->relateArticles();
+    $template = $this->getTestEntity(ContentTemplate::ENTITY_TYPE_ID);
+    \assert($template instanceof ContentTemplate);
+    $this->setUpCurrentUser([], [ContentTemplate::ADMIN_PERMISSION, 'edit any article content']);
+    $template->setComponentTree(self::populateActiveComponentVersionPlaceholders([
+      self::item(self::A, self::CARD, ['heading' => self::link()], reference: self::REL),
+    ]));
+    $template->save();
+    $data = self::decodeResponse($this->request(Request::create($this->getLayoutUrl($template)->toString())));
+    $node = self::findLayoutNode($data['layout'][0]['components'], self::A);
+    self::assertSame(self::REL, $node['reference']);
+    self::assertSame('node:article', $node['referenceTarget']);
+    // Posting it back, with a change to the reference, takes no link permission.
+    $url = $this->getLayoutUrl($template)->toString();
+    $body = \json_decode($this->filterLayoutForPost((string) $this->request(Request::create($url))->getContent()), TRUE);
+    self::setNodeReference($body['layout'][0]['components'], self::A, 'field:uid');
+    $body['model'][self::A] = self::linkedHeadingModel(self::USER_NAME);
+    $response = $this->request(Request::create($url, 'POST', content: \json_encode($body, JSON_THROW_ON_ERROR)));
+    self::assertSame(200, $response->getStatusCode(), (string) $response->getContent());
+  }
 
   // Config schema, storage and hashes.
 
@@ -2041,7 +2412,7 @@ final class ComponentTreeReferenceTest extends ApiLayoutControllerTestBase {
   #[\PHPUnit\Framework\Attributes\DataProvider('providerStaleModes')]
   public function testUnchangedStaleFieldReferenceDoesNotBlockLayoutPost(string $mode): void {
     $this->storeStalePage($mode);
-    foreach (['non-linker' => fn () => $this->asNonLinker(), 'linker' => fn () => $this->setUpCurrentUser([], ['edit any article content', self::PUBLISH_PERMISSION, 'access content'])] as $who => $switch) {
+    foreach (['non-linker' => fn () => $this->asNonLinker(), 'linker' => fn () => $this->setUpCurrentUser([], ['edit any article content', self::LINK_PERMISSION, self::PUBLISH_PERMISSION, 'access content'])] as $who => $switch) {
       $switch();
       $response = $this->postLayout(fn (array &$components, array &$model) => $this->changeSiblingText($components, $model));
       self::assertSame(200, $response->getStatusCode(), "$who: " . $response->getContent());
@@ -2108,7 +2479,7 @@ final class ComponentTreeReferenceTest extends ApiLayoutControllerTestBase {
     $host->set('field_canvas_demo', $new);
     self::assertGreaterThan(0, $host->validate()->count(), 'A new instance with a path that cannot be followed');
     // Over POST, for both kinds of user, nothing is saved.
-    foreach (['linker' => ['edit any article content'], 'non-linker' => ['edit any article content']] as $who => $permissions) {
+    foreach (['linker' => ['edit any article content', self::LINK_PERMISSION], 'non-linker' => ['edit any article content']] as $who => $permissions) {
       $this->setUpCurrentUser([], $permissions);
       $this->assertUnprocessable(fn () => $this->postLayout(function (array &$components) {
         self::setNodeReference($components, self::B, 'field:field_gone_too');
@@ -2127,6 +2498,20 @@ final class ComponentTreeReferenceTest extends ApiLayoutControllerTestBase {
     $this->assertUnprocessable(fn () => $this->postLayout(function (array &$components) {
       self::setNodeReference($components, self::A, $this->refTo($this->beta));
     }), 'scope changed');
+  }
+
+  public function testRemovingAStaleReferenceNeedsThePermissionAsBefore(): void {
+    $this->storeStalePage('deleted field');
+    $this->asNonLinker();
+    try {
+      $this->postLayout(function (array &$components) {
+        self::setNodeReference($components, self::B, NULL);
+      });
+      self::fail('Expected a 403');
+    }
+    catch (AccessDeniedHttpException $e) {
+      self::assertStringContainsString(self::LINK_PERMISSION, $e->getMessage());
+    }
   }
 
   #[\PHPUnit\Framework\Attributes\DataProvider('providerStaleModes')]
@@ -2150,7 +2535,7 @@ final class ComponentTreeReferenceTest extends ApiLayoutControllerTestBase {
 
   public function testPatchThatChangesALinkUnderAStaleReferenceIsUnprocessable(): void {
     $this->storeStalePage('deleted field');
-    $this->setUpCurrentUser([], ['edit any article content', 'access content']);
+    $this->setUpCurrentUser([], ['edit any article content', self::LINK_PERMISSION, 'access content']);
     foreach ([
       'replaced by a value' => ['source' => ['text' => ['sourceType' => 'static:field_item:string', 'value' => 'Plain', 'expression' => 'ℹ︎string␟value']], 'resolved' => ['text' => 'Plain', 'element' => 'h2']],
       'another expression' => ['source' => ['text' => self::link('ℹ︎␜entity:node:article␝uid␞␟target_id')], 'resolved' => ['text' => NULL, 'element' => 'h2']],
@@ -2180,7 +2565,7 @@ final class ComponentTreeReferenceTest extends ApiLayoutControllerTestBase {
     }
     // A reference that is garbage is still refused, and a field path with
     // nothing to resolve against.
-    $this->setUpCurrentUser([], ['edit any article content', 'access content']);
+    $this->setUpCurrentUser([], ['edit any article content', self::LINK_PERMISSION, 'access content']);
     $this->assertUnprocessable(fn () => $this->postLayout(function (array &$components) {
       self::setNodeReference($components, self::S, 'not a reference');
     }), 'garbage');
@@ -2209,13 +2594,37 @@ final class ComponentTreeReferenceTest extends ApiLayoutControllerTestBase {
     $published = $this->makePublishAllRequest();
     self::assertSame(200, $published->getStatusCode(), (string) $published->getContent());
     // Put there anew, it is still refused.
-    $this->setUpCurrentUser([], ['edit any article content', 'access content']);
+    $this->setUpCurrentUser([], ['edit any article content', self::LINK_PERMISSION, 'access content']);
     $this->assertUnprocessable(fn () => $this->postLayout(function (array &$components) use ($reference) {
       self::setNodeReference($components, self::S, $reference);
     }), 'new');
   }
 
   // Phase 2b review, Minor 1.
+
+  public function testNonLinkerCannotEditAPickedReferenceAboveAFieldReference(): void {
+    $this->relateArticles();
+    $this->storeTree([
+      self::item(self::A, self::CARD, ['heading' => 'Static'], reference: $this->refTo($this->alpha)),
+      self::item(self::F, self::HEADING, ['text' => self::link(), 'element' => 'h2'], self::A, 'the_body', self::REL),
+    ]);
+    $this->asNonLinker();
+    try {
+      $this->postLayout(function (array &$components) {
+        self::setNodeReference($components, self::A, $this->refTo($this->beta));
+      });
+      self::fail('Expected a 403: the field reference below now reads from another entity');
+    }
+    catch (AccessDeniedHttpException $e) {
+      self::assertStringContainsString(self::LINK_PERMISSION, $e->getMessage());
+    }
+    self::assertSame($this->refTo($this->alpha), $this->currentItem(self::A)['reference']);
+    // A linker may.
+    $this->setUpCurrentUser([], ['edit any article content', self::LINK_PERMISSION, 'access content']);
+    self::assertSame(200, $this->postLayout(function (array &$components) {
+      self::setNodeReference($components, self::A, $this->refTo($this->beta));
+    })->getStatusCode());
+  }
 
   public function testDeniedIntermediateHopGivesTheExampleAndNothingFromBeyond(): void {
     $gamma = $this->relateArticles();
@@ -2238,7 +2647,7 @@ final class ComponentTreeReferenceTest extends ApiLayoutControllerTestBase {
       foreach (['Beta title', self::GAMMA_TITLE, 'Private title'] as $leak) {
         self::assertStringNotContainsString($leak, $html, "$label: $leak");
       }
-      $this->setUpCurrentUser([], ['edit any article content', 'access content']);
+      $this->setUpCurrentUser([], ['edit any article content', self::LINK_PERMISSION, 'access content']);
     }
     self::assertNotNull($gamma->id());
   }
