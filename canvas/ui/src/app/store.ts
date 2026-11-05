@@ -50,6 +50,7 @@ import { notificationsApi } from '@/services/notificationsApi';
 import { pageDataFormApi } from '@/services/pageDataForm';
 import { pageVariantsApi } from '@/services/pageVariants';
 import { patternBindingApi } from '@/services/patternBinding';
+import { patternExposureApi } from '@/services/patternExposure';
 import { patternApi } from '@/services/patterns';
 import { pendingChangesApi } from '@/services/pendingChangesApi';
 import { personalizationApi } from '@/services/personalization';
@@ -160,6 +161,7 @@ const rootReducer = combineSlices(
   },
   patternApi,
   patternBindingApi,
+  patternExposureApi,
   treeReferenceApi,
   pageVariantsApi,
   assetLibraryApi,
@@ -265,6 +267,7 @@ export const makeStore = (preloadedState?: Partial<RootState>) => {
       return getDefaultMiddleware().concat(
         patternApi.middleware,
         patternBindingApi.middleware,
+        patternExposureApi.middleware,
         treeReferenceApi.middleware,
         pageVariantsApi.middleware,
         assetLibraryApi.middleware,

@@ -1,0 +1,8 @@
+/* The trigger matches the link control of component props. */
+.exposed svg {
+  color: var(--blue-9);
+}
+
+.content {
+  width: 260px;
+}
