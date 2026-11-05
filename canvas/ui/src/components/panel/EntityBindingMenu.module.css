@@ -1,0 +1,69 @@
+/* The trigger matches the link control of component props. */
+.trigger {
+  display: flex;
+  margin-inline: 6px;
+  margin-inline-start: auto;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 1em;
+  align-self: center;
+  &:focus {
+    outline: 2px solid var(--blue-9);
+    outline-offset: 1px;
+  }
+}
+
+.default {
+  color: var(--slate-11);
+}
+
+.bound,
+.open {
+  .default {
+    color: var(--blue-9);
+  }
+}
+
+.default:hover {
+  color: var(--blue-9);
+}
+
+/* A link inherited from an ancestor is shown, but not as set here. */
+.muted {
+  .default,
+  .default:hover {
+    color: var(--slate-11);
+  }
+}
+
+.warning,
+.warning.bound,
+.warning.open {
+  .default,
+  .default:hover {
+    color: var(--amber-10);
+  }
+}
+
+/* Holds the trigger when a picker is anchored to it. */
+.anchor {
+  display: flex;
+  margin-inline-start: auto;
+  align-self: center;
+}
+
+.header.header {
+  display: flex;
+  flex-direction: column;
+  max-width: 280px;
+  height: auto;
+  min-height: var(--space-5);
+  padding-block: var(--space-2);
+  white-space: normal;
+  color: var(--gray-12);
+}
+
+.option {
+  display: flex;
+  flex-direction: column;
+}

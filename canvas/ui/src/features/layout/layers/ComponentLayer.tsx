@@ -3,10 +3,16 @@ import clsx from 'clsx';
 import { useDraggable } from '@dnd-kit/core';
 import { CollapsibleContent } from '@radix-ui/react-collapsible';
 import * as Collapsible from '@radix-ui/react-collapsible';
-import { TriangleDownIcon, TriangleRightIcon } from '@radix-ui/react-icons';
+import {
+  Link1Icon,
+  TriangleDownIcon,
+  TriangleRightIcon,
+} from '@radix-ui/react-icons';
 import { Box, Flex } from '@radix-ui/themes';
+import { skipToken } from '@reduxjs/toolkit/query';
 
 import { useAppDispatch, useAppSelector } from '@/app/hooks';
+import { referenceTitle } from '@/components/panel/referenceWords';
 import SidebarNode from '@/components/sidePanel/SidebarNode';
 import LayersDropZone from '@/features/layout/layers/LayersDropZone';
 import SlotLayer from '@/features/layout/layers/SlotLayer';
@@ -24,6 +30,7 @@ import {
 import useComponentSelection from '@/hooks/useComponentSelection';
 import useGetComponentName from '@/hooks/useGetComponentName';
 import { isMarkerComponentType } from '@/services/pageVariants';
+import { useGetTreeReferenceTargetsQuery } from '@/services/treeReference';
 
 import type React from 'react';
 import type { CollapsibleTriggerProps } from '@radix-ui/react-collapsible';
@@ -55,6 +62,10 @@ const ComponentLayer: React.FC<ComponentLayerProps> = ({
   });
   const collapsedLayers = useAppSelector(selectCollapsedLayers);
   const { handleComponentSelection } = useComponentSelection();
+  // The type names are only needed to title the marker of a reference.
+  const { data: groups = [] } = useGetTreeReferenceTargetsQuery(
+    component.reference ? undefined : skipToken,
+  );
 
   const componentId = component.uuid;
   const isCollapsed = collapsedLayers.includes(componentId);
@@ -161,6 +172,20 @@ const ComponentLayer: React.FC<ComponentLayerProps> = ({
               />
             }
             indent={indent}
+            trailingContent={
+              // Only a component with a reference of its own is marked. The
+              // ones below it inherit, and marking them would be noise.
+              component.reference ? (
+                <span
+                  title={referenceTitle(component.reference, groups)}
+                  data-testid="layer-reference-marker"
+                  role="img"
+                  aria-label={referenceTitle(component.reference, groups)}
+                >
+                  <Link1Icon color="var(--slate-11)" />
+                </span>
+              ) : undefined
+            }
             leadingContent={
               <Flex>
                 <Box width="var(--space-4)" mr="1">

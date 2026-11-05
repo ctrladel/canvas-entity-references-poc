@@ -60,6 +60,8 @@ const TemplateLayout = () => {
           layout,
           model,
           translations: translations || {},
+          // Links read from this where no reference is above them.
+          hostTarget: `${entityType}:${bundle}`,
           // We don't need to update the preview here - it is done in the layout
           // api's onQueryStarted method - @see componentAndLayout.ts
           updatePreview: false,
@@ -70,6 +72,8 @@ const TemplateLayout = () => {
     layout,
     model,
     translations,
+    entityType,
+    bundle,
     isInitialized,
     error,
     showBoundary,

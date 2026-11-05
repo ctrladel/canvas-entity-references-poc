@@ -18,6 +18,10 @@ export interface FormStateSliceFormsState {
 
 export interface FormStateSliceState extends FormStateSliceFormsState {
   currentComponent: string | undefined;
+  // Raised when the layout model is replaced from outside the form. The
+  // component form compares it with the version its query string was built
+  // for, and does not fetch until they match.
+  formRebuildVersion: number;
 }
 
 const emptyFormState = {
@@ -27,6 +31,7 @@ const emptyFormState = {
 
 export const initialState: FormStateSliceState = {
   currentComponent: undefined,
+  formRebuildVersion: 0,
   [FORM_TYPES.COMPONENT_INSTANCE_FORM]: emptyFormState,
   [FORM_TYPES.ENTITY_FORM]: emptyFormState,
 };
@@ -70,6 +75,10 @@ export const formStateSlice = createSlice({
         [FORM_TYPES.COMPONENT_INSTANCE_FORM]: { errors: {}, values: {} },
       }),
     ),
+    requestFormRebuild: create.reducer((state) => ({
+      ...state,
+      formRebuildVersion: state.formRebuildVersion + 1,
+    })),
     clearFieldValues: create.reducer(
       (state, action: PayloadAction<FormId>) => ({
         ...state,
@@ -162,6 +171,7 @@ export const formStateSlice = createSlice({
   }),
   selectors: {
     selectCurrentComponent: (state) => state.currentComponent,
+    selectFormRebuildVersion: (state) => state.formRebuildVersion,
   },
 });
 
@@ -195,10 +205,12 @@ export const selectFieldError = createSelector(
     formState[identifiers.formId]?.errors[identifiers.fieldName] || null,
 );
 
-export const { selectCurrentComponent } = formStateSlice.selectors;
+export const { selectCurrentComponent, selectFormRebuildVersion } =
+  formStateSlice.selectors;
 
 export const {
   setCurrentComponent,
+  requestFormRebuild,
   setFieldError,
   setFieldValue,
   clearFieldError,

@@ -2,12 +2,13 @@ import { useMemo } from 'react';
 
 import { useAppDispatch, useAppSelector } from '@/app/hooks';
 import { UnifiedMenu } from '@/components/UnifiedMenu';
-import { moveNode, selectLayout } from '@/features/layout/layoutModelSlice';
+import { selectLayout } from '@/features/layout/layoutModelSlice';
 import {
   findNodePathByUuid,
   findSiblings,
   getDisplayNameForNode,
 } from '@/features/layout/layoutUtils';
+import { moveComponent } from '@/features/layout/referenceActions';
 import { unsetHoveredComponent } from '@/features/ui/uiSlice';
 
 import type React from 'react';
@@ -54,7 +55,7 @@ const SiblingSlotsSubMenu: React.FC<{
       if (!slotPath) return;
       // Insert at the end of the slot's component array
       const to = [...slotPath, 0];
-      dispatch(moveNode({ uuid: component.uuid, to }));
+      dispatch(moveComponent({ uuid: component.uuid, to }));
       dispatch(unsetHoveredComponent());
     };
 

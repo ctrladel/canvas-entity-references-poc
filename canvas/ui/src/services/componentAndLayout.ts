@@ -18,6 +18,7 @@ import { baseQueryWithAutoSaves } from '@/services/baseQuery';
 import { brandKitApi } from '@/services/brandKit';
 import { pendingChangesApi } from '@/services/pendingChangesApi';
 import { handleAutoSavesHashUpdate } from '@/utils/autoSaves';
+import { stripLayoutBody, stripPatchBody } from '@/utils/serverOnlyFields';
 
 import type { RootLayoutModel } from '@/features/layout/layoutModelSlice';
 import type {
@@ -349,7 +350,7 @@ export const componentAndLayoutApi = createApi({
       query: (body) => ({
         url: 'canvas/api/v0/layout-content-template/{entity_type}.{template_bundle}.{template_view_mode}/{entity_id}',
         method: 'POST',
-        body,
+        body: stripLayoutBody(body),
       }),
       async onQueryStarted(arg, { dispatch, queryFulfilled }) {
         const { data, meta } = await queryFulfilled;
@@ -373,7 +374,7 @@ export const componentAndLayoutApi = createApi({
       query: (body) => ({
         url: 'canvas/api/v0/layout-content-template/{entity_type}.{template_bundle}.{template_view_mode}/{entity_id}',
         method: 'PATCH',
-        body,
+        body: stripPatchBody(body),
       }),
       async onQueryStarted(body, { dispatch, queryFulfilled }) {
         const { data, meta } = await queryFulfilled;
@@ -399,7 +400,7 @@ export const componentAndLayoutApi = createApi({
       query: (body) => ({
         url: 'canvas/api/v0/layout-pattern/{entity_id}',
         method: 'POST',
-        body,
+        body: stripLayoutBody(body),
       }),
       async onQueryStarted(arg, { dispatch, queryFulfilled }) {
         const { data, meta } = await queryFulfilled;
@@ -423,7 +424,7 @@ export const componentAndLayoutApi = createApi({
       query: (body) => ({
         url: 'canvas/api/v0/layout-pattern/{entity_id}',
         method: 'PATCH',
-        body,
+        body: stripPatchBody(body),
       }),
       async onQueryStarted(body, { dispatch, queryFulfilled }) {
         const { data, meta } = await queryFulfilled;

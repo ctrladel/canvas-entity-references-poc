@@ -6,7 +6,7 @@ import {
   DEFAULT_REGION,
   selectEditorFrameContext,
 } from '@/features/ui/uiSlice';
-import { previewApi } from '@/services/preview';
+import { previewApi, waitForLayoutSave } from '@/services/preview';
 import { hasSlotDefinitions, isPropSourceComponent } from '@/types/Component';
 import {
   getCanvasSettings,
@@ -22,11 +22,17 @@ import {
   removeComponentByUuid,
   replaceUUIDsAndUpdateModel,
 } from './layoutUtils';
+import {
+  dropMisplacedFieldReferences,
+  dropMisplacedPastedFieldReferences,
+  fieldScopes,
+  parseReference,
+  reconcileLinks,
+} from './linkTargets';
 
 import type { PayloadAction } from '@reduxjs/toolkit';
 import type { StateWithHistory } from 'redux-undo';
 import type { AppThunk } from '@/app/store';
-import type { EditorFrameContext } from '@/features/ui/uiSlice';
 import type {
   CanvasComponent,
   ComponentsList,
@@ -55,6 +61,13 @@ export interface ComponentNode {
   uuid: UUID;
   type: string;
   slots: SlotNode[];
+  // What this component and everything in its slots link to: a picked entity,
+  // `entity_type_id:bundle:uuid`, or a field of the entity in scope,
+  // `field:<field name>`. See linkTargets.ts.
+  reference?: string;
+  // `entity_type_id:bundle` of a field reference the server could follow.
+  // Sent by the server, never stored.
+  referenceTarget?: string;
 }
 
 export interface SlotNode {
@@ -86,6 +99,9 @@ export interface LayoutModelSliceState extends RootLayoutModel {
   updatePreview: boolean;
   isInitialized?: boolean;
   translations?: Record<string, any>;
+  // `entity_type_id:bundle` of the content a Content Template is for. Where a
+  // component has no reference above it, its links read from that.
+  hostTarget?: string | null;
 }
 
 export const initialState: LayoutModelSliceState = {
@@ -94,6 +110,7 @@ export const initialState: LayoutModelSliceState = {
   updatePreview: false,
   isInitialized: false,
   translations: {},
+  hostTarget: null,
 };
 
 // This wrapper is necessary because when using slices with redux-undo,
@@ -105,6 +122,9 @@ export interface StateWithHistoryWrapper {
 type MoveNodePayload = {
   uuid: string | undefined;
   to: number[] | undefined;
+  // When given, the links and field references the new place cannot serve
+  // are put back in the same action, so that undo is one step.
+  components?: ComponentsList;
 };
 
 type ShiftNodePayload = {
@@ -124,6 +144,10 @@ type InsertMultipleNodesPayload = {
    * so that you can then do something with the newly inserted node using that UUID.
    */
   useUUID?: string;
+  // As for moving. `scope` is the type and bundle the pasted nodes' field
+  // references read from where they were copied.
+  components?: ComponentsList;
+  scope?: string | null;
 };
 
 type AddNewNodePayload = {
@@ -197,6 +221,9 @@ export interface ComponentModel {
   // @see docs/components.md#3.2.1
   // @todo Make this less confusing in https://www.drupal.org/project/canvas/issues/3521041
   resolved: ResolvedValues;
+  // Required props that are linked to content and have no value, so that the
+  // preview shows their example value. Sent by the server, never stored.
+  linkFallbacks?: string[];
 }
 
 export type Sources = Record<string, PropSource>;
@@ -364,9 +391,48 @@ export const layoutModelSlice = createSlice({
         state.updatePreview = true;
       },
     ),
+    setNodeReference: create.reducer(
+      (
+        state,
+        action: PayloadAction<{
+          uuid: string;
+          reference: string | null;
+          // `entity_type_id:bundle` a field reference leads to.
+          referenceTarget?: string | null;
+          // Needed to put back the links the new reference cannot serve.
+          components?: ComponentsList;
+        }>,
+      ) => {
+        const { uuid, reference, referenceTarget, components } = action.payload;
+        const node = findComponentByUuid(state.layout, uuid);
+        if (!node) {
+          return;
+        }
+        const host = state.hostTarget ?? null;
+        const scopesBefore = components
+          ? fieldScopes(state.layout, uuid, host)
+          : {};
+        delete node.referenceTarget;
+        if (reference) {
+          node.reference = reference;
+          if (referenceTarget && parseReference(reference)?.kind === 'field') {
+            node.referenceTarget = referenceTarget;
+          }
+        } else {
+          delete node.reference;
+        }
+        if (components) {
+          // Field references below this node read from its target now, and
+          // the field may not exist there.
+          dropMisplacedFieldReferences(state.layout, uuid, host, scopesBefore);
+          reconcileLinks(state.layout, state.model, uuid, host, components);
+        }
+        state.updatePreview = true;
+      },
+    ),
     moveNode: create.reducer(
       (state, action: PayloadAction<MoveNodePayload>) => {
-        const { uuid, to } = action.payload;
+        const { uuid, to, components } = action.payload;
         if (!uuid || !Array.isArray(to)) {
           console.error(
             `Cannot move ${uuid} to position ${to}. Check both uuid and to are defined/valid.`,
@@ -374,15 +440,23 @@ export const layoutModelSlice = createSlice({
           return;
         }
 
+        const host = state.hostTarget ?? null;
+        const scopesBefore = components
+          ? fieldScopes(state.layout, uuid, host)
+          : {};
         // Create a mutable copy of the path array since action payloads are frozen.
         state.layout = moveNodeToPath(state.layout, uuid, [...to]);
+        if (components) {
+          dropMisplacedFieldReferences(state.layout, uuid, host, scopesBefore);
+          reconcileLinks(state.layout, state.model, uuid, host, components);
+        }
         // Flag a preview update.
         state.updatePreview = true;
       },
     ),
     insertNodes: create.reducer(
       (state, action: PayloadAction<InsertMultipleNodesPayload>) => {
-        const { layoutModel, to, useUUID } = action.payload;
+        const { layoutModel, to, useUUID, components, scope } = action.payload;
 
         if (!Array.isArray(to)) {
           console.error(
@@ -395,7 +469,7 @@ export const layoutModelSlice = createSlice({
         const newLayout: Array<RegionNode> = JSON.parse(
           JSON.stringify(state.layout),
         );
-        const components = layoutModel.layout;
+        const nodes = layoutModel.layout;
         const model = layoutModel.model;
 
         // Create a mutable copy of the path array since action payloads
@@ -408,10 +482,11 @@ export const layoutModelSlice = createSlice({
           );
         }
         let regionRoot = newLayout[rootIndex];
+        const insertedUuids: string[] = [];
 
         // Loop through each node in reverse order to maintain the correct insert positions
-        for (let i = components.length - 1; i >= 0; i--) {
-          const node = components[i];
+        for (let i = nodes.length - 1; i >= 0; i--) {
+          const node = nodes[i];
           const specifyUUID = i === 0;
           const { updatedNode, updatedModel: nodeUpdatedModel } =
             replaceUUIDsAndUpdateModel(
@@ -421,10 +496,25 @@ export const layoutModelSlice = createSlice({
             );
           updatedModel = { ...updatedModel, ...nodeUpdatedModel };
           regionRoot = insertNodeAtPath(regionRoot, toPath, updatedNode);
+          insertedUuids.push(updatedNode.uuid);
         }
 
         state.model = updatedModel;
         state.layout[rootIndex] = regionRoot;
+        if (components) {
+          const host = state.hostTarget ?? null;
+          for (const uuid of insertedUuids) {
+            if (scope !== undefined) {
+              dropMisplacedPastedFieldReferences(
+                state.layout,
+                uuid,
+                host,
+                scope,
+              );
+            }
+            reconcileLinks(state.layout, state.model, uuid, host, components);
+          }
+        }
         // Flag a preview update.
         state.updatePreview = true;
       },
@@ -525,12 +615,14 @@ export const layoutModelSlice = createSlice({
           updatePreview,
           isInitialized = true,
           translations,
+          hostTarget,
         } = action.payload;
         state.layout = layout;
         state.model = model;
         state.updatePreview = updatePreview;
         state.isInitialized = isInitialized;
         state.translations = translations || {};
+        state.hostTarget = hostTarget ?? null;
       },
     ),
     setTranslations: create.reducer(
@@ -811,6 +903,11 @@ export const _linkPropToEntityValue =
     inputUIData: InputUIData;
   }): AppThunk =>
   async (dispatch, getState) => {
+    // A link made right after setting a reference must not reach the server
+    // before the layout holding the reference does: the PATCH would find a
+    // draft without it, and its response would replace the layout. That holds
+    // for every kind of tree, and for the gap before the request is made.
+    await waitForLayoutSave();
     const state = getState();
     const components: ComponentsList | undefined = state?.componentAndLayoutApi
       ?.queries?.['getComponents(undefined)']?.data as
@@ -848,7 +945,7 @@ export const _linkPropToEntityValue =
       delete resolved[propName];
 
       const valuePayload = {
-        type: 'template' as EditorFrameContext,
+        type: inputUIData.editorFrameContext,
         componentInstanceUuid: componentToUpdateId,
         componentType: `${selectedComponentType}@${version}`,
         model: {
@@ -901,6 +998,7 @@ export const {
   setTranslations,
   duplicateNode,
   moveNode,
+  setNodeReference,
   shiftNode,
   sortNode,
   setUpdatePreview,
@@ -920,6 +1018,8 @@ export const selectLayoutHistory = (state: StateWithHistoryWrapper) =>
   state.layoutModel;
 export const selectUpdatePreview = (state: StateWithHistoryWrapper) =>
   state.layoutModel.present.updatePreview;
+export const selectHostTarget = (state: StateWithHistoryWrapper) =>
+  state.layoutModel.present.hostTarget ?? null;
 export const selectIsInitialized = (state: StateWithHistoryWrapper) =>
   state.layoutModel.present.isInitialized;
 export const selectTranslations = (state: StateWithHistoryWrapper) =>

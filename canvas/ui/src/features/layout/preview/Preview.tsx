@@ -35,6 +35,9 @@ import {
   usePostTemplateLayoutMutation,
 } from '@/services/componentAndLayout';
 import {
+  beginLayoutSave,
+  dropExpectedLayoutSave,
+  endLayoutSave,
   selectUpdateComponentLoadingState,
   useQueuedPostPreviewMutation,
 } from '@/services/preview';
@@ -109,7 +112,9 @@ const Preview: React.FC = () => {
       // it now would write that entity's content onto the one just navigated
       // to. Skip until the current entity is initialized. This also cancels any
       // request that was parked (behind an in-flight AJAX) before navigation.
+      const layoutSave = beginLayoutSave();
       if (!isInitializedRef.current) {
+        endLayoutSave(layoutSave);
         return;
       }
       try {
@@ -137,6 +142,8 @@ const Preview: React.FC = () => {
         }
       } catch (err) {
         showBoundary(err);
+      } finally {
+        endLayoutSave(layoutSave);
       }
     },
     [
@@ -213,6 +220,8 @@ const Preview: React.FC = () => {
   // Effect: Cleanup interval on unmount
   useEffect(() => {
     return () => {
+      // Nothing is left to send a change that is still owed.
+      dropExpectedLayoutSave();
       if (pollingIntervalRef.current) {
         clearInterval(pollingIntervalRef.current);
         pollingIntervalRef.current = null;

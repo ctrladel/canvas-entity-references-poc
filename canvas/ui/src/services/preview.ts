@@ -19,6 +19,7 @@ import {
 import { pendingChangesApi } from '@/services/pendingChangesApi';
 import { handleAutoSavesHashUpdate } from '@/utils/autoSaves';
 import { getEntityTitle } from '@/utils/entityTitle';
+import { stripLayoutBody, stripPatchBody } from '@/utils/serverOnlyFields';
 
 import type { RootState } from '@/app/store';
 import type {
@@ -64,7 +65,7 @@ export const previewApi = createApi({
       query: ({ entityType, entityId, ...body }) => ({
         url: `canvas/api/v0/layout/${entityType}/${entityId}`,
         method: 'POST',
-        body,
+        body: stripLayoutBody(body),
       }),
       async onQueryStarted(arg, { dispatch, queryFulfilled }) {
         pushCanvasLayoutRequest();
@@ -163,7 +164,7 @@ export const previewApi = createApi({
         return {
           url,
           method: 'PATCH',
-          body,
+          body: stripPatchBody(body),
         };
       },
       async onQueryStarted(body, { dispatch, queryFulfilled }) {
@@ -332,7 +333,33 @@ type PostPreviewArg = {
 // Prevents parallel requests to the endpoint - only the most recent
 // queued request executes when the active one completes.
 let activePreviewRequest: Promise<PostPreviewResult> | null = null;
-let pendingPreviewArg: PostPreviewArg | null = null;
+// The request waiting for the active one. A newer call replaces what it sends
+// and shares its promise, so every caller learns when the newest request
+// finishes (a caller left waiting forever would never release its layout save
+// barrier).
+let pendingPreview: {
+  send: () => Promise<PostPreviewResult>;
+  promise: Promise<PostPreviewResult>;
+  resolve: (value: PostPreviewResult) => void;
+  reject: (reason: unknown) => void;
+} | null = null;
+
+function startPreviewRequest(
+  send: () => Promise<PostPreviewResult>,
+): Promise<PostPreviewResult> {
+  const request = send();
+  activePreviewRequest = request;
+  const finish = () => {
+    activePreviewRequest = null;
+    const next = pendingPreview;
+    pendingPreview = null;
+    if (next) {
+      startPreviewRequest(next.send).then(next.resolve, next.reject);
+    }
+  };
+  request.then(finish, finish);
+  return request;
+}
 
 // Incremented each time a postPreview request completes successfully.
 // Used to detect whether an error has been superseded by a later success.
@@ -350,13 +377,83 @@ export async function waitForPreviewRequests(): Promise<void> {
   }
 }
 
+// A layout change the editor owes the server: made in the store, not yet in a
+// request that has finished. The layout POST of a template or another config entity is not
+// queued like that of a page, and a request is only made once the preview
+// effect runs, so neither `activePreviewRequest` nor the store says that a
+// change is on its way.
+export interface LayoutSaveBarrier {
+  promise: Promise<void>;
+  release: () => void;
+  // A request that started after the change claimed this barrier.
+  claimed: boolean;
+}
+let layoutSaveBarrier: LayoutSaveBarrier | null = null;
+
+/**
+ * Says that the layout in the store holds a change the server does not have
+ * yet. The next layout request carries it; `waitForLayoutSave` returns once
+ * that request has finished.
+ */
+export function expectLayoutSave(): void {
+  if (layoutSaveBarrier && !layoutSaveBarrier.claimed) {
+    return;
+  }
+  let release: () => void = () => {};
+  const promise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  layoutSaveBarrier = { promise, release, claimed: false };
+}
+
+/**
+ * Called when a layout request of a page or a config entity such as a template starts (or
+ * is skipped). Give the result to `endLayoutSave` once it has finished.
+ */
+export function beginLayoutSave(): LayoutSaveBarrier | null {
+  if (layoutSaveBarrier) {
+    layoutSaveBarrier.claimed = true;
+  }
+  return layoutSaveBarrier;
+}
+
+export function endLayoutSave(barrier: LayoutSaveBarrier | null): void {
+  if (!barrier) {
+    return;
+  }
+  barrier.release();
+  if (layoutSaveBarrier === barrier) {
+    layoutSaveBarrier = null;
+  }
+}
+
+/**
+ * Lets go of any change still owed, when nothing is left to send it, such as
+ * when the editor closes.
+ */
+export function dropExpectedLayoutSave(): void {
+  endLayoutSave(layoutSaveBarrier);
+}
+
+/**
+ * Waits until the layout in the store has reached the server, for every kind
+ * of tree: for the request that carries a change announced with
+ * `expectLayoutSave`, and for any page request still running.
+ */
+export async function waitForLayoutSave(): Promise<void> {
+  while (layoutSaveBarrier) {
+    await layoutSaveBarrier.promise;
+  }
+  await waitForPreviewRequests();
+}
+
 /**
  * Queued version of usePostPreviewMutation that prevents parallel requests.
  *
  * When a request is in flight, subsequent calls are queued. Only the most
  * recent queued request executes when the active one completes - earlier
- * queued requests never resolve (their data would be stale since preview
- * values are cumulative).
+ * queued requests do not run (their data would be stale since preview
+ * values are cumulative) and resolve with the result of the newest one.
  *
  * This prevents entity lock contention on the backend.
  */
@@ -368,30 +465,24 @@ export function useQueuedPostPreviewMutation(
 ] {
   const [postPreview, mutationState] = usePostPreviewMutation(options);
 
-  const queuedPostPreview = async (
+  const queuedPostPreview = (
     arg: PostPreviewArg,
   ): Promise<PostPreviewResult> => {
-    if (activePreviewRequest) {
-      pendingPreviewArg = arg;
-      await activePreviewRequest.catch(() => {});
-      if (pendingPreviewArg !== arg) {
-        // Superseded by a newer request - never resolve
-        return new Promise(() => {});
-      }
-      pendingPreviewArg = null;
+    const send = () => postPreview(arg).unwrap();
+    if (!activePreviewRequest) {
+      return startPreviewRequest(send);
     }
-
-    activePreviewRequest = postPreview(arg).unwrap();
-    try {
-      return await activePreviewRequest;
-    } finally {
-      activePreviewRequest = null;
-      if (pendingPreviewArg) {
-        const nextArg = pendingPreviewArg;
-        pendingPreviewArg = null;
-        queuedPostPreview(nextArg);
-      }
+    if (!pendingPreview) {
+      let resolve!: (value: PostPreviewResult) => void;
+      let reject!: (reason: unknown) => void;
+      const promise = new Promise<PostPreviewResult>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      pendingPreview = { send, promise, resolve, reject };
     }
+    pendingPreview.send = send;
+    return pendingPreview.promise;
   };
 
   return [queuedPostPreview, mutationState];

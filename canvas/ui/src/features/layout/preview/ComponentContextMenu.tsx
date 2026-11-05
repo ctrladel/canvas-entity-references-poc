@@ -4,13 +4,10 @@ import { ContextMenu } from '@radix-ui/themes';
 import { useAppDispatch, useAppSelector } from '@/app/hooks';
 import PermissionCheck from '@/components/PermissionCheck';
 import { UnifiedMenu } from '@/components/UnifiedMenu';
-import {
-  deleteNode,
-  duplicateNode,
-  shiftNode,
-} from '@/features/layout/layoutModelSlice';
+import { deleteNode, shiftNode } from '@/features/layout/layoutModelSlice';
 import { componentSubtreeMatchesType } from '@/features/layout/layoutUtils';
 import ComponentContextMenuMoveInto from '@/features/layout/preview/ComponentContextMenuMoveInto';
+import { duplicateComponent } from '@/features/layout/referenceActions';
 import { setDialogOpen } from '@/features/ui/dialogSlice';
 import {
   selectEditorViewPortScale,
@@ -90,7 +87,7 @@ export const ComponentContextMenuContent: React.FC<
       dispatch(unsetHoveredComponent());
 
       if (componentUuid) {
-        dispatch(duplicateNode({ uuid: componentUuid }));
+        dispatch(duplicateComponent({ uuid: componentUuid }));
       }
     },
     [dispatch, componentUuid],

@@ -51,6 +51,7 @@ import { patternApi } from '@/services/patterns';
 import { pendingChangesApi } from '@/services/pendingChangesApi';
 import { personalizationApi } from '@/services/personalization';
 import { previewApi } from '@/services/preview';
+import { treeReferenceApi } from '@/services/treeReference';
 import { rtkQueryErrorHandler } from '@/utils/rtkQuery-error';
 
 import type { Action, Middleware, ThunkAction } from '@reduxjs/toolkit';
@@ -118,8 +119,12 @@ const rootReducer = combineSlices(
         clearHistoryType: '@@redux-undo/layoutModel_CLEAR_HISTORY',
         filter: (action, currentState, previousHistory) => {
           const { present } = previousHistory;
+          // Nothing is recorded before the layout is loaded. An empty model
+          // is not the sign of that: a layout of components without inputs,
+          // such as a placement of a component that takes no props, has one, and its changes still count
+          // in the undo stack of the `ui` slice.
           return (
-            Object.keys(present.model).length > 0 &&
+            present.isInitialized !== false &&
             action.type !== setInitialLayoutModel.type &&
             action.type !== setTranslations.type &&
             action.type !== setUpdatePreview.type
@@ -150,6 +155,7 @@ const rootReducer = combineSlices(
     pageDataOwner: pageDataOwnerReducer,
   },
   patternApi,
+  treeReferenceApi,
   pageVariantsApi,
   assetLibraryApi,
   brandKitApi,
@@ -251,6 +257,7 @@ export const makeStore = (preloadedState?: Partial<RootState>) => {
     middleware: (getDefaultMiddleware) => {
       return getDefaultMiddleware().concat(
         patternApi.middleware,
+        treeReferenceApi.middleware,
         pageVariantsApi.middleware,
         assetLibraryApi.middleware,
         brandKitApi.middleware,
