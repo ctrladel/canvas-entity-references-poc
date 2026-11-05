@@ -7,11 +7,13 @@ namespace Drupal\canvas_pattern_components\EventSubscriber;
 use Drupal\canvas\AutoSave\AutoSaveManager;
 use Drupal\canvas\Entity\Pattern;
 use Drupal\canvas_pattern_components\PatternLinks;
+use Drupal\canvas_pattern_components\PatternNesting;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpKernel\Event\RequestEvent;
 use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
+use Symfony\Component\HttpKernel\Exception\UnprocessableEntityHttpException;
 use Symfony\Component\HttpKernel\KernelEvents;
 
 /**
@@ -66,6 +68,9 @@ final class PatternEditorRequestSubscriber implements EventSubscriberInterface {
     if (!$pattern instanceof Pattern) {
       return;
     }
+    if ($request->isMethod('POST') && str_starts_with($route, 'canvas.api.layout.')) {
+      $this->refuseNestingInItself($request, $pattern);
+    }
     // The draft in its stored form, or what is published: the links of every
     // bundle. Asked before the request is marked as the editor's.
     $draft = $this->autoSaveManager->getAutoSaveEntity($pattern);
@@ -101,6 +106,32 @@ final class PatternEditorRequestSubscriber implements EventSubscriberInterface {
     }
     $request->attributes->set('preview_entity', $host);
     $request->attributes->set('entity', $expanded);
+  }
+
+  /**
+   * Refuses a layout that places the Pattern in itself.
+   *
+   * Anything that writes a layout, a paste or a duplicate included, comes here.
+   */
+  private function refuseNestingInItself(Request $request, Pattern $pattern): void {
+    $body = \json_decode($request->getContent(), TRUE);
+    $types = [];
+    $collect = static function (mixed $node) use (&$collect, &$types): void {
+      if (!\is_array($node)) {
+        return;
+      }
+      if (\is_string($node['type'] ?? NULL)) {
+        $types[] = $node['type'];
+      }
+      foreach ($node as $child) {
+        $collect($child);
+      }
+    };
+    $collect($body['layout'] ?? []);
+    $path = PatternNesting::wayBack((string) $pattern->id(), PatternNesting::idsOf($types));
+    if ($path !== NULL) {
+      throw new UnprocessableEntityHttpException(\sprintf('A pattern cannot be placed inside itself, directly or through another pattern. %s would place this pattern inside itself.', \implode(' → ', $path)));
+    }
   }
 
   /**

@@ -33,14 +33,17 @@ final class PatternComponentHooks {
    */
   #[Hook('config_schema_info_alter')]
   public static function configSchemaInfoAlter(array &$definitions): void {
-    if (!isset($definitions['canvas.component.*']['mapping']['source']['constraints']['Choice'])) {
-      // Either the schema shape changed, or another module (e.g.
-      // canvas_dev_mode) already lifted the restriction. Nothing to do.
-      return;
+    // A Pattern with a Pattern placed in it is fine, until that leads back to it.
+    // (On the tree: constraints of the entity as a whole are not run when a
+    // Pattern is validated.)
+    if (isset($definitions['canvas.pattern.*']['mapping']['component_tree'])) {
+      $definitions['canvas.pattern.*']['mapping']['component_tree']['constraints']['PatternNotNested'] = [];
     }
-    $choice = &$definitions['canvas.component.*']['mapping']['source']['constraints']['Choice'];
-    if (\is_array($choice) && !\in_array(PatternComponent::SOURCE_PLUGIN_ID, $choice, TRUE)) {
-      $choice[] = PatternComponent::SOURCE_PLUGIN_ID;
+    if (isset($definitions['canvas.component.*']['mapping']['source']['constraints']['Choice'])) {
+      $choice = &$definitions['canvas.component.*']['mapping']['source']['constraints']['Choice'];
+      if (\is_array($choice) && !\in_array(PatternComponent::SOURCE_PLUGIN_ID, $choice, TRUE)) {
+        $choice[] = PatternComponent::SOURCE_PLUGIN_ID;
+      }
     }
   }
 
