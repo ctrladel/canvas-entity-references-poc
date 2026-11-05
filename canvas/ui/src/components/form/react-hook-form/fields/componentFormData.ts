@@ -283,7 +283,14 @@ export function getPropsValues(
         value,
       );
       if (transformed === null) {
-        return carry;
+        // The widget of an override that is cleared has nothing to say, which
+        // is the override: an empty one. Leaving the key out would keep the
+        // value it had, and the override could never be emptied. (Resetting it
+        // to the Pattern's value takes the key out of the model instead.)
+        const clearsOverride =
+          component?.patternMappedBundles !== undefined &&
+          key in (selectedModel.resolved ?? {});
+        return clearsOverride ? { ...carry, [key]: null } : carry;
       }
       return {
         ...carry,

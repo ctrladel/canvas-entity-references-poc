@@ -25,7 +25,9 @@ import DrupalToggle from '@/components/form/components/drupal/DrupalToggle';
 import DrupalVerticalTabs from '@/components/form/components/drupal/DrupalVerticalTabs';
 import InputDescription from '@/components/form/components/drupal/InputDescription.js';
 import LinkedFieldBox from '@/components/form/components/drupal/LinkedFieldBox.js';
+import { DrupalPropLabelControls } from '@/components/form/components/drupal/PropLabelControls.js';
 import PropLinker from '@/components/form/components/drupal/PropLinker.js';
+import PropOverrideState from '@/components/form/components/drupal/PropOverrideState.js';
 import DrupalMediaLibraryWidgetContainer from '@/components/form/components/MediaLibraryWidgetContainer';
 import SerpPreview from '@/components/form/components/SerpPreview';
 
@@ -59,6 +61,8 @@ const twigToJSXComponentMap = {
   'canvas-drupal-label': DrupalFormElementLabel,
   'drupal-canvas-linked-field-box': LinkedFieldBox,
   'drupal-canvas-prop-linker': PropLinker,
+  'drupal-canvas-prop-override-state': PropOverrideState,
+  'drupal-canvas-prop-label-controls': DrupalPropLabelControls,
   'drupal-canvas-serp-preview': SerpPreview,
   'canvas-default-image-preview': DefaultImagePreview,
   'drupal-canvas-media-list-container': DrupalMediaListContainer,

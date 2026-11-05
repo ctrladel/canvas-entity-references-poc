@@ -1,0 +1,4 @@
+/* The lock matches the link control of component props and the expose control. */
+.overridden svg {
+  color: var(--accent-9);
+}
