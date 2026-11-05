@@ -1,0 +1,14 @@
+services:
+  Drupal\canvas_pattern_components\PatternLinks:
+    arguments:
+      - '@entity_type.manager'
+      - '@logger.factory'
+      - '@Drupal\canvas\ComponentTreeReferenceTargets'
+  # Canvas' services, reachable by validators and the PluginExists constraint,
+  # which fetch them from the container by ID.
+  canvas_pattern_components.entity_field_matcher:
+    alias: Drupal\canvas\ShapeMatcher\EntityFieldPropSourceMatcher
+    public: true
+  canvas_pattern_components.adapter_manager:
+    alias: Drupal\canvas\Plugin\AdapterManager
+    public: true

@@ -1,0 +1,7 @@
+name: 'Canvas Pattern Components test'
+type: module
+description: 'Provides an adapter from a module other than Canvas, for the tests of linked Patterns.'
+package: 'Testing'
+core_version_requirement: ^11.3
+dependencies:
+  - canvas:canvas

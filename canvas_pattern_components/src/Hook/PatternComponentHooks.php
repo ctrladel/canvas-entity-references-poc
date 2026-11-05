@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Drupal\canvas_pattern_components\Hook;
 
 use Drupal\canvas\ComponentSource\ComponentSourceManager;
+use Drupal\canvas\Entity\Component;
 use Drupal\canvas\Entity\Pattern;
+use Drupal\canvas_pattern_components\ComponentSource\PatternComponentDiscovery;
 use Drupal\canvas_pattern_components\Plugin\Canvas\ComponentSource\PatternComponent;
 use Drupal\Core\Hook\Attribute\Hook;
 
@@ -54,6 +56,35 @@ final class PatternComponentHooks {
   #[Hook('pattern_update')]
   public function refreshComponent(Pattern $pattern): void {
     $this->componentSourceManager->generateComponents(PatternComponent::SOURCE_PLUGIN_ID, [(string) $pattern->id()]);
+    // The links of the Pattern are among the dependencies of its Component,
+    // and generating does not touch an existing Component whose settings are
+    // unchanged: save it when its dependencies are no longer the calculated ones.
+    $component = Component::load(PatternComponentDiscovery::getComponentConfigEntityId((string) $pattern->id()));
+    if ($component !== NULL) {
+      if (!self::sameDependencies($component->getDependencies(), (clone $component)->calculateDependencies()->getDependencies())) {
+        $component->save();
+      }
+    }
+  }
+
+  /**
+   * Whether two sets of dependencies hold the same names, in any order.
+   *
+   * @param array<string, list<string>> $a
+   *   Dependencies, keyed by type.
+   * @param array<string, list<string>> $b
+   *   Dependencies, keyed by type.
+   */
+  public static function sameDependencies(array $a, array $b): bool {
+    $normalize = static function (array $dependencies): array {
+      $dependencies = \array_filter($dependencies);
+      foreach ($dependencies as &$names) {
+        \sort($names);
+      }
+      \ksort($dependencies);
+      return $dependencies;
+    };
+    return $normalize($a) === $normalize($b);
   }
 
 }
