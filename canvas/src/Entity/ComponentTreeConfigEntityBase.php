@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Drupal\canvas\Entity;
 
 use Drupal\canvas\JsonSchemaInterpreter\JsonSchemaType;
+use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItem;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemListInstantiatorTrait;
 use Drupal\canvas\Utility\ColorPropReferences;
@@ -97,6 +98,10 @@ abstract class ComponentTreeConfigEntityBase extends ConfigEntityBase implements
         if (\is_string($component_instance['inputs'])) {
           $component_instance['inputs'] = Json::decode($component_instance['inputs']);
         }
+        // An absent reference is stored as an absent key, not as NULL.
+        if (\array_key_exists('reference', $component_instance) && $component_instance['reference'] === NULL) {
+          unset($component_instance['reference']);
+        }
         return $component_instance;
       },
       $component_tree_sequence,
@@ -178,6 +183,29 @@ abstract class ComponentTreeConfigEntityBase extends ConfigEntityBase implements
    */
   public function onDependencyRemoval(array $dependencies): bool {
     $changed = FALSE;
+
+    // A linked prop whose field is removed goes back to a static value. Any
+    // config tree can hold links under a reference, and without this the
+    // config system would delete the whole entity instead.
+    $tree = $this->getComponentTree();
+    $stripped = FALSE;
+    foreach ($dependencies as $type => $dependencies_of_type) {
+      foreach ($dependencies_of_type as $dependency) {
+        if ($dependency instanceof ConfigEntityInterface) {
+          $dependency = $dependency->getConfigDependencyName();
+        }
+        foreach ($tree as $item) {
+          \assert($item instanceof ComponentTreeItem);
+          $stripped = $item->updatePropSourcesOnDependencyRemoval($type, $dependency) || $stripped;
+        }
+        // A field reference to the removed field goes, with what read from it.
+        $stripped = $tree->removeFieldReferencesDependingOn($type, $dependency) || $stripped;
+      }
+    }
+    if ($stripped) {
+      $this->setComponentTree($tree->getValue());
+      $changed = TRUE;
+    }
 
     foreach ($dependencies['config'] ?? [] as $dependency) {
       $color = $dependency instanceof Color ? $dependency : NULL;

@@ -7,12 +7,17 @@ namespace Drupal\canvas\Plugin\Field\FieldType;
 use Drupal\canvas\ComponentSource\ComponentSourceInterface;
 use Drupal\canvas\ComponentSource\ComponentSourceWithSlotsInterface;
 use Drupal\canvas\ComponentSource\ComponentSourceWithSwitchCasesInterface;
+use Drupal\canvas\ComponentTreeReference;
 use Drupal\canvas\Element\RenderSafeComponentContainer;
 use Drupal\canvas\Entity\Component;
 use Drupal\canvas\Entity\ComponentTreeEntityInterface;
 use Drupal\canvas\Exception\SubtreeInjectionException;
 use Drupal\canvas\HydratedTree;
+use Drupal\canvas\LinkTarget;
 use Drupal\canvas\Plugin\Validation\Constraint\ComponentTreeStructureConstraint;
+use Drupal\canvas\PropExpressions\StructuredData\Evaluator;
+use Drupal\canvas\PropExpressions\StructuredData\NegotiatedLanguage;
+use Drupal\canvas\ReferenceCoverage;
 use Drupal\Component\Graph\Graph;
 use Drupal\Component\Plugin\DependentPluginInterface;
 use Drupal\Component\Utility\NestedArray;
@@ -431,7 +436,287 @@ final class ComponentTreeItemList extends FieldItemList implements RenderableInt
    */
   public function onChange($delta): void {
     parent::onChange($delta);
+    $this->resetReferenceLookups();
+  }
+
+  /**
+   * {@inheritdoc}
+   *
+   * ItemList::setValue() reuses the existing items and sets their values
+   * without notifying the list, so the lookups have to be reset here.
+   */
+  public function setValue($values, $notify = TRUE): void {
+    parent::setValue($values, $notify);
+    $this->resetReferenceLookups();
+  }
+
+  private function resetReferenceLookups(): void {
     $this->graph = NULL;
+    $this->coverages = NULL;
+    $this->linkTargets = [];
+    $this->loadedTargets = NULL;
+  }
+
+  /**
+   * What the nearest reference of each instance amounts to, by UUID.
+   *
+   * @var array<string, ?\Drupal\canvas\ReferenceCoverage>|null
+   */
+  private ?array $coverages = NULL;
+
+  /**
+   * Link targets by the reference, or by the holder of a field reference.
+   *
+   * @var array<string, \Drupal\canvas\LinkTarget>
+   */
+  private array $linkTargets = [];
+
+  /**
+   * The entities the picked references of this tree point at, by `type|uuid`.
+   *
+   * @var array<string, \Drupal\Core\Entity\FieldableEntityInterface>|null
+   */
+  private ?array $loadedTargets = NULL;
+
+  /**
+   * Gets the reference that applies to an instance: its own or its ancestors'.
+   *
+   * It can be a picked entity or a field of the entity in scope. A string of
+   * it is the reference as stored.
+   *
+   * @see \Drupal\canvas\ComponentTreeReference::coverageInItems()
+   */
+  public function getNearestReference(string $uuid): ?ReferenceCoverage {
+    return $this->getCoverages()[$uuid] ?? NULL;
+  }
+
+  /**
+   * @return array<string, ?\Drupal\canvas\ReferenceCoverage>
+   */
+  private function getCoverages(): array {
+    if ($this->coverages === NULL) {
+      // A field reference with nothing above it is read from the host: the
+      // entity a tree is stored on, or what a config tree is for.
+      $this->coverages = ComponentTreeReference::coverageInItems($this->getValue(), function (): ?string {
+        $root = $this->getRoot();
+        return ComponentTreeReference::rootTarget($root instanceof EntityAdapter ? $root->getEntity() : NULL);
+      });
+    }
+    return $this->coverages;
+  }
+
+  /**
+   * Gets what the linked props of an instance evaluate against.
+   *
+   * @param string $uuid
+   *   A component instance UUID.
+   * @param \Drupal\Core\Entity\FieldableEntityInterface|null $host
+   *   The tree's host, whose language the target is shown in. A field
+   *   reference with no reference above it is read from it.
+   *
+   * @return \Drupal\canvas\LinkTarget|null
+   *   NULL when no reference covers the instance: the tree's host applies, as it
+   *   does without references.
+   */
+  public function resolveLinkTarget(string $uuid, ?FieldableEntityInterface $host): ?LinkTarget {
+    $coverage = $this->getNearestReference($uuid);
+    return $coverage === NULL ? NULL : $this->resolveCoverage($coverage, $host);
+  }
+
+  private function resolveCoverage(ReferenceCoverage $coverage, ?FieldableEntityInterface $host): LinkTarget {
+    // Picked references that are written alike share one result. A field
+    // reference is read from whatever is above it.
+    $key = ($coverage->picked !== NULL ? $coverage->stored : 'field|' . $coverage->holderUuid) . '|' . ($host?->language()->getId() ?? '');
+    return $this->linkTargets[$key] ??= $coverage->picked !== NULL
+      ? $this->resolvePicked($coverage->picked, $host, $coverage->isResolved())
+      : $this->resolveField($coverage, $host);
+  }
+
+  private function resolvePicked(ComponentTreeReference $reference, ?FieldableEntityInterface $host, bool $resolvable): LinkTarget {
+    $entity_type_manager = \Drupal::entityTypeManager();
+    $cacheability = new CacheableMetadata();
+    $entity = NULL;
+    if (!$resolvable) {
+      // The type or bundle is gone, and may be created again.
+      $cacheability->addCacheTags(['entity_bundles', 'entity_types']);
+    }
+    elseif ($entity_type_manager->hasDefinition($reference->entityTypeId)) {
+      $entity = $this->getLoadedTargets()[$reference->entityTypeId . '|' . $reference->uuid] ?? NULL;
+      // A deleted entity is not found, and it may come back with the same UUID
+      // (content import), so depend on the whole list.
+      $cacheability->addCacheTags($entity_type_manager->getDefinition($reference->entityTypeId)->getListCacheTags());
+    }
+    // An entity of another bundle than was linked counts as missing.
+    if ($entity instanceof FieldableEntityInterface && $entity->bundle() !== $reference->bundle) {
+      $entity = NULL;
+    }
+    return $this->viewableTarget($entity, $cacheability, $host);
+  }
+
+  /**
+   * Follows a field reference: the first value of a field of the entity in scope.
+   *
+   * What it gives is what a picked reference to that entity would: nothing,
+   * with the cacheability of why, if the field is empty, the entity gone or of
+   * another bundle than the field is known to point at, or the viewer may see
+   * neither the field nor the entity.
+   */
+  private function resolveField(ReferenceCoverage $coverage, ?FieldableEntityInterface $host): LinkTarget {
+    $cacheability = new CacheableMetadata();
+    if ($coverage->scope !== NULL) {
+      $scope = $this->resolveCoverage($coverage->scope, $host);
+      $cacheability->addCacheableDependency($scope->cacheability);
+      $scope_entity = $scope->entity;
+    }
+    else {
+      $scope_entity = $host;
+      if ($host !== NULL) {
+        $cacheability->addCacheableDependency($host);
+      }
+    }
+    // A field that can't be followed may be (re)created.
+    if (!$coverage->isResolved()) {
+      return new LinkTarget(NULL, $cacheability->addCacheTags(['entity_field_info']));
+    }
+    if ($scope_entity === NULL) {
+      return new LinkTarget(NULL, $cacheability);
+    }
+    $field_name = (string) $coverage->fieldName;
+    $cacheability->addCacheTags([\sprintf('config:field.field.%s.%s.%s', $scope_entity->getEntityTypeId(), $scope_entity->bundle(), $field_name)]);
+    if (!$scope_entity->hasField($field_name)) {
+      return new LinkTarget(NULL, $cacheability->addCacheTags(['entity_field_info']));
+    }
+    $items = $scope_entity->get($field_name);
+    $field_access = $items->access('view', NULL, TRUE);
+    $cacheability->addCacheableDependency($field_access);
+    if (!$field_access->isAllowed()) {
+      return new LinkTarget(NULL, $cacheability);
+    }
+    // Only the first value is used.
+    $entity = $items->isEmpty() ? NULL : $items->get(0)?->get('entity')->getValue();
+    if ($entity !== NULL || !$items->isEmpty()) {
+      // The value may point at an entity that is gone, and that comes back
+      // (content import) with the same UUID.
+      $cacheability->addCacheTags(\Drupal::entityTypeManager()->getDefinition((string) $coverage->entityTypeId)->getListCacheTags());
+    }
+    if ($entity instanceof FieldableEntityInterface && ($entity->getEntityTypeId() !== $coverage->entityTypeId || $entity->bundle() !== $coverage->bundle)) {
+      $entity = NULL;
+    }
+    return $this->viewableTarget($entity instanceof FieldableEntityInterface ? $entity : NULL, $cacheability, $host);
+  }
+
+  /**
+   * Makes the target of a reference of an entity, if the viewer may see it.
+   */
+  private function viewableTarget(?FieldableEntityInterface $entity, CacheableMetadata $cacheability, ?FieldableEntityInterface $host): LinkTarget {
+    if ($entity === NULL) {
+      return new LinkTarget(NULL, $cacheability);
+    }
+    // HostEntityUrlPropSource has no access check of its own, so this is the
+    // one place that keeps an unviewable target from reaching a page.
+    $access = $entity->access('view', NULL, TRUE);
+    $cacheability->addCacheableDependency($entity)->addCacheableDependency($access);
+    if (!$access->isAllowed()) {
+      return new LinkTarget(NULL, $cacheability);
+    }
+    $language = NegotiatedLanguage::forReferenceHost($host);
+    $entity = Evaluator::resolveTranslationForReference($entity, $language);
+    $cacheability->addCacheableDependency($language);
+    return new LinkTarget($entity, $cacheability);
+  }
+
+  /**
+   * Loads every picked entity of the tree: one query per entity type.
+   *
+   * @return array<string, \Drupal\Core\Entity\FieldableEntityInterface>
+   */
+  private function getLoadedTargets(): array {
+    if ($this->loadedTargets !== NULL) {
+      return $this->loadedTargets;
+    }
+    $uuids_by_type = [];
+    foreach ($this->getCoverages() as $coverage) {
+      $reference = $coverage?->picked;
+      if ($reference !== NULL && $coverage->isResolved()) {
+        $uuids_by_type[$reference->entityTypeId][$reference->uuid] = $reference->uuid;
+      }
+    }
+    $this->loadedTargets = [];
+    foreach ($uuids_by_type as $type => $uuids) {
+      foreach (\Drupal::entityTypeManager()->getStorage($type)->loadByProperties(['uuid' => \array_values($uuids)]) as $loaded) {
+        if ($loaded instanceof FieldableEntityInterface) {
+          $this->loadedTargets[$type . '|' . $loaded->uuid()] = $loaded;
+        }
+      }
+    }
+    return $this->loadedTargets;
+  }
+
+  /**
+   * Drops the field references that read a field of a removed config.
+   *
+   * What read the field is no longer there to be followed, and what is linked
+   * below it can't read the instance's own entity instead: it is another type.
+   * So the reference goes, together with the links under it and with the
+   * field references that were read from it. The instances stay.
+   *
+   * @param string $dependency_type
+   *   The kind of dependency that is being removed. Only `config` can be one.
+   * @param string $dependency_name
+   *   Its name, for example `field.field.node.article.field_related_article`.
+   *
+   * @return bool
+   *   Whether anything changed. The caller sets the changed tree on its entity.
+   */
+  public function removeFieldReferencesDependingOn(string $dependency_type, string $dependency_name): bool {
+    if ($dependency_type !== 'config') {
+      return FALSE;
+    }
+    $removed_holders = [];
+    foreach ($this->getCoverages() as $coverage) {
+      if ($coverage !== NULL && $coverage->isField() && !isset($removed_holders[$coverage->holderUuid]) && $coverage->getFieldConfigDependencyName() === $dependency_name) {
+        $removed_holders[$coverage->holderUuid] = TRUE;
+      }
+    }
+    if ($removed_holders === []) {
+      return FALSE;
+    }
+    $changed = FALSE;
+    $coverages = $this->getCoverages();
+    foreach ($this as $item) {
+      \assert($item instanceof ComponentTreeItem);
+      $coverage = $coverages[$item->getUuid()] ?? NULL;
+      $affected = FALSE;
+      foreach (\array_keys($removed_holders) as $holder) {
+        $affected = $affected || ($coverage !== NULL && $coverage->dependsOnHolder($holder));
+      }
+      if (!$affected) {
+        continue;
+      }
+      // Links below an affected reference, and the links of its holder.
+      $changed = $item->removeLinkedProps() || $changed;
+      // A field reference that was read from a removed one goes too.
+      if ($coverage->holderUuid === $item->getUuid() && $coverage->isField()) {
+        $item->setReference(NULL);
+        $changed = TRUE;
+      }
+    }
+    return $changed;
+  }
+
+  /**
+   * Gets the prop source types in use that no reference makes acceptable.
+   *
+   * Links under a reference are allowed where the tree would otherwise reject
+   * them, so they are left out of what constraints on `inputs` look at.
+   */
+  public function getPropSourceTypesOutsideReference(): array {
+    $types = [];
+    foreach ($this as $item) {
+      \assert($item instanceof ComponentTreeItem);
+      $types = \array_merge($types, $item->getPropSourceTypesOutsideReference());
+    }
+    return \array_unique($types);
   }
 
   /**

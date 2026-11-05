@@ -7,9 +7,9 @@ namespace Drupal\canvas\Plugin\Canvas\ComponentSource;
 use Drupal\canvas\ComponentSource\ComponentSourceBase;
 use Drupal\canvas\ComponentSource\ComponentSourceWithSlotsInterface;
 use Drupal\canvas\Entity\Component;
-use Drupal\canvas\Entity\ContentTemplate;
 use Drupal\canvas\Entity\EmptyTargetEntityProviderInterface;
 use Drupal\canvas\Entity\Pattern;
+use Drupal\canvas\Entity\TargetEntityDataDefinitionProviderInterface;
 use Drupal\canvas\InvalidComponentInputsPropSourceException;
 use Drupal\canvas\MissingHostEntityException;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItem;
@@ -37,6 +37,8 @@ use Drupal\Component\Assertion\Inspector;
 use Drupal\Component\Plugin\DependentPluginInterface;
 use Drupal\Component\Utility\NestedArray;
 use Drupal\Component\Utility\Unicode;
+use Drupal\Core\Cache\Cache;
+use Drupal\Core\Cache\CacheableDependencyInterface;
 use Drupal\Core\Cache\CacheableMetadata;
 use Drupal\Core\Entity\EntityInterface;
 use Drupal\Core\Entity\FieldableEntityInterface;
@@ -94,6 +96,37 @@ use Symfony\Component\Validator\ConstraintViolationListInterface;
 abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase implements ComponentSourceWithSlotsInterface, ContainerFactoryPluginInterface {
 
   public const EXPLICIT_INPUT_NAME = 'props';
+
+  /**
+   * The key in hydrated inputs listing props that show their example value.
+   *
+   * @see ::hydrateComponent()
+   */
+  public const string LINK_FALLBACKS = 'link_fallbacks';
+
+  /**
+   * The key in explicit input saying a reference covers the instance.
+   *
+   * A reference, picked or from a field. Only then does a required linked prop
+   * without a value show its example value. Everything else (links that read a
+   * Content Template's own entity, instances outside a reference)
+   * behaves as it did before references existed.
+   *
+   * @see ::getExplicitInput()
+   * @see ::getEmptyRequiredLinkedProps()
+   */
+  public const string COVERED_BY_REFERENCE = 'covered_by_reference';
+
+  /**
+   * The key in hydrated inputs holding the cacheability of omitted props.
+   *
+   * An optional prop without a value is left out of the props, but what made it
+   * empty (an access check, the list of entities a deleted one was in) still
+   * decides when the page is rendered again.
+   *
+   * @see ::hydrateComponent()
+   */
+  public const string OMITTED_CACHEABILITY = 'omitted_cacheability';
 
   /**
    * @var array<string, \Drupal\canvas\PropSource\StaticPropSource>
@@ -467,6 +500,9 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
     }
 
     $fieldable_host_entity = $this->getFieldableHostEntity($item, $host_entity);
+    // Linked props evaluate against the nearest reference, if any.
+    $list = $item->getParent();
+    $link_target = $list instanceof \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList ? $list->resolveLinkTarget($uuid, $fieldable_host_entity) : NULL;
 
     $values = $item->getInputs() ?? [];
 
@@ -490,9 +526,12 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
     $resolved_values = [];
     foreach ($values as $prop => $input) {
       $values[$prop] = $this->uncollapse($input, $prop)->toArray();
+      $prop_source = NULL;
       try {
-        $resolved_values[$prop] = PropSource::parse($values[$prop])
-          ->evaluate($fieldable_host_entity, is_required: FALSE);
+        $prop_source = PropSource::parse($values[$prop]);
+        $resolved_values[$prop] = $link_target !== NULL && $prop_source instanceof LinkablePropSourceInterface
+          ? $link_target->evaluate($prop_source)
+          : $prop_source->evaluate($fieldable_host_entity, is_required: FALSE);
       }
       catch (CacheableAccessDeniedHttpException $e) {
         $this->logger->warning('Access denied when evaluating prop source for prop %prop of component instance %uuid with input `%input`. Original error: %error', [
@@ -501,7 +540,26 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
           '%uuid' => $uuid,
           '%error' => $e->getMessage(),
         ]);
-        $resolved_values[$prop] = new EvaluationResult(NULL, $e);
+        // Under a reference the denial happened on the target: what the result
+        // depends on includes the target, or it would be served to viewers
+        // who may see the value.
+        $cacheability = CacheableMetadata::createFromObject($e);
+        if ($link_target !== NULL && $prop_source instanceof LinkablePropSourceInterface) {
+          $cacheability->addCacheableDependency($link_target->cacheability);
+        }
+        $resolved_values[$prop] = new EvaluationResult(NULL, $cacheability);
+      }
+      // A link a reference's target can't serve: another bundle, or a field
+      // that no longer exists. The tree stays editable and the prop has no
+      // value. Without a covering reference nothing is caught: that is how it
+      // behaved before references.
+      catch (\DomainException | \InvalidArgumentException $e) {
+        if ($link_target === NULL || !$prop_source instanceof LinkablePropSourceInterface) {
+          throw $e;
+        }
+        // Debug only: this is repeated for every render of the instance.
+        $this->logger->debug('Link of prop %prop of component instance %uuid cannot be served: %error', ['%prop' => $prop, '%uuid' => $uuid, '%error' => $e->getMessage()]);
+        $resolved_values[$prop] = new EvaluationResult(NULL, $link_target->cacheability);
       }
     }
 
@@ -510,8 +568,70 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
     return [
       'source' => $values,
       'resolved' => $resolved_values,
-    ];
+      // Only present when it holds, so nothing changes for the instances that
+      // no reference covers.
+    ] + ($link_target !== NULL ? [self::COVERED_BY_REFERENCE => TRUE] : []);
   }
+
+  /**
+   * Gets the required props linked to content that currently have no value.
+   *
+   * Only for an instance covered by a picked reference. Elsewhere an empty
+   * required prop is left to validation, as before references existed.
+   *
+   * @param array{source: array<string, mixed>, resolved: array<string, \Drupal\canvas\PropExpressions\StructuredData\EvaluationResult>} $explicit_input
+   *   See ::getExplicitInput().
+   *
+   * @return list<string>
+   *   Prop names.
+   */
+  protected function getEmptyRequiredLinkedProps(array $explicit_input): array {
+    $props = [];
+    if (!($explicit_input[self::COVERED_BY_REFERENCE] ?? FALSE)) {
+      return $props;
+    }
+    foreach ($explicit_input['resolved'] as $prop => $result) {
+      if (!($this->configuration['prop_field_definitions'][$prop]['required'] ?? FALSE)) {
+        continue;
+      }
+      if (!\in_array($explicit_input['source'][$prop]['sourceType'] ?? NULL, ComponentTreeItem::LINK_SOURCE_TYPES, TRUE)) {
+        continue;
+      }
+      $value = $result->value;
+      if ($value === NULL || $value === '' || (\is_array($value) && \array_filter($value, static fn ($v) => $v !== NULL && $v !== '' && $v !== []) === [])) {
+        $props[] = (string) $prop;
+      }
+    }
+    return $props;
+  }
+
+  /**
+   * Notes in the log which props of a rendered instance show an example value.
+   *
+   * Only for visitors: the editor sees it in the preview. One notice per
+   * instance and request, however often it is rendered, so a page full of such
+   * instances can't flood the log. It names props, never content.
+   *
+   * @param array<string, mixed> $inputs
+   *   The hydrated inputs given to ::renderComponent().
+   */
+  protected function logLinkFallbacks(array $inputs, string $componentUuid, bool $isPreview): void {
+    if ($isPreview || empty($inputs[self::LINK_FALLBACKS]) || isset($this->loggedFallbacks[$componentUuid])) {
+      return;
+    }
+    $this->loggedFallbacks[$componentUuid] = TRUE;
+    $this->logger->notice('Component instance %uuid shows the example value for the required props linked to content that has no value: @props.', [
+      '%uuid' => $componentUuid,
+      '@props' => \implode(', ', $inputs[self::LINK_FALLBACKS]),
+    ]);
+  }
+
+  /**
+   * Instances whose fallback was logged during this request.
+   *
+   * @var array<string, true>
+   */
+  private array $loggedFallbacks = [];
 
   /**
    * {@inheritdoc}
@@ -524,6 +644,7 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
     // validation error is triggered.
     // @see \Drupal\Core\Theme\Component\ComponentValidator::validateProps()
     $prop_field_definitions = $this->configuration['prop_field_definitions'];
+    $omitted_cacheability = new CacheableMetadata();
     foreach ($hydrated[self::EXPLICIT_INPUT_NAME] as $prop => $resolved_value) {
       // The stored inputs SHOULD match the live schema, but mid-development or
       // due to a botched release, that is impossible to guarantee.
@@ -533,6 +654,7 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
       }
       $is_required = $prop_field_definitions[$prop]['required'];
       if (!$is_required && $resolved_value->value === NULL) {
+        $omitted_cacheability->addCacheableDependency($resolved_value);
         unset($hydrated[self::EXPLICIT_INPUT_NAME][$prop]);
         continue;
       }
@@ -541,6 +663,7 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
       // entire object is optional).
       $prop_expression = StructuredDataPropExpression::fromString($prop_field_definitions[$prop]['expression']);
       if (!$is_required && $prop_expression instanceof ObjectPropExpressionInterface && empty(array_filter($resolved_value->value))) {
+        $omitted_cacheability->addCacheableDependency($resolved_value);
         unset($hydrated[self::EXPLICIT_INPUT_NAME][$prop]);
       }
     }
@@ -553,6 +676,26 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
     // 2) and we always render the live version of a component.
     // @see \Drupal\canvas\Entity\Component::ACTIVE_VERSION
     $active_required_explicit_inputs = \array_map(fn(array $prop_source) => new EvaluationResult($prop_source['value']), $active_required_explicit_inputs);
+    // A required prop linked to content that has no value (the field is empty,
+    // or the entity is deleted or can't be viewed) shows the component's
+    // example value instead, for visitors and editors alike, so the component
+    // and its slots stay. This is plain code, so the outcome doesn't depend on
+    // whether PHP assertions validate the props. The example is kept next to
+    // the cacheability of the failed lookup: restoring the content must
+    // refresh the page.
+    $fallbacks = [];
+    foreach ($this->getEmptyRequiredLinkedProps($explicit_input) as $prop) {
+      if (isset($active_required_explicit_inputs[$prop])) {
+        $hydrated[self::EXPLICIT_INPUT_NAME][$prop] = new EvaluationResult($active_required_explicit_inputs[$prop]->value, $explicit_input['resolved'][$prop]);
+        $fallbacks[] = $prop;
+      }
+    }
+    if ($fallbacks !== []) {
+      $hydrated[self::LINK_FALLBACKS] = $fallbacks;
+    }
+    if ($omitted_cacheability->getCacheTags() !== [] || $omitted_cacheability->getCacheContexts() !== [] || $omitted_cacheability->getCacheMaxAge() !== Cache::PERMANENT) {
+      $hydrated[self::OMITTED_CACHEABILITY] = $omitted_cacheability;
+    }
     $hydrated[self::EXPLICIT_INPUT_NAME] += $active_required_explicit_inputs;
 
     if (!empty($slot_definitions)) {
@@ -570,14 +713,19 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
   /**
    * @param array<string, EvaluationResult> $props_evaluation_results
    * @param array<string, mixed>|null $prop_schemas
+   * @param \Drupal\Core\Cache\CacheableDependencyInterface|null $omitted_props_cacheability
+   *   The cacheability of props that were left out for having no value.
    *
    * @return array{0: array<string, mixed>, 1: \Drupal\Core\Render\BubbleableMetadata}
    *   The resolved prop values and their combined bubbleable metadata: the
    *   cacheability plus the `#attached` assets a value needs to render.
    */
-  public function getResolvedPropsAndBubbleableMetadata(array $props_evaluation_results, ?array $prop_schemas = NULL): array {
+  public function getResolvedPropsAndBubbleableMetadata(array $props_evaluation_results, ?array $prop_schemas = NULL, ?CacheableDependencyInterface $omitted_props_cacheability = NULL): array {
     \assert(Inspector::assertAllObjects($props_evaluation_results, EvaluationResult::class));
     $props_bubbleable_metadata = new BubbleableMetadata();
+    if ($omitted_props_cacheability !== NULL) {
+      $props_bubbleable_metadata->addCacheableDependency($omitted_props_cacheability);
+    }
     $props = [];
     foreach ($props_evaluation_results as $prop_name => $evaluation_result) {
       $value = $evaluation_result->value;
@@ -657,6 +805,13 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
     ];
     \assert(Inspector::assertAll(fn ($r) => !$r instanceof EvaluationResult, $model['resolved']));
 
+    // Tell the client which required props linked to content show their example
+    // value, so it can warn the editor. Only the names, nothing of the content.
+    $fallbacks = $this->getEmptyRequiredLinkedProps($explicit_input);
+    if ($fallbacks !== []) {
+      $model['linkFallbacks'] = $fallbacks;
+    }
+
     foreach ($explicit_input['resolved'] as $prop_name => $evaluation_result) {
       // Undo what ::clientModelToInput() and ::getExplicitInput() did: restore
       // the `source` to pass the necessary information to the client that
@@ -723,7 +878,7 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
   /**
    * {@inheritdoc}
    */
-  public function validateComponentInput(array $inputValues, string $component_instance_uuid, ?FieldableEntityInterface $entity): ConstraintViolationListInterface {
+  public function validateComponentInput(array $inputValues, string $component_instance_uuid, ?FieldableEntityInterface $entity, bool $covered_by_reference = FALSE): ConstraintViolationListInterface {
     $violations = new ConstraintViolationList();
     $prop_field_definitions = $this->configuration['prop_field_definitions'];
 
@@ -808,22 +963,43 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
         }
       }
     }
-    try {
-      $resolvedInputValues = \array_map(
+    // Link-sourced props that cannot be evaluated here, for lack of a host.
+    $unresolvable_props = [];
+    $resolve = static fn (array $sources): array => \array_map(
       // @phpstan-ignore-next-line
-        fn(array $prop_source): mixed => PropSource::parse($prop_source)
-          ->evaluate($entity, is_required: FALSE)->value,
-        $inputValues,
-      );
+      fn(array $prop_source): mixed => PropSource::parse($prop_source)
+        ->evaluate($entity, is_required: FALSE)->value,
+      $sources,
+    );
+    try {
+      $resolvedInputValues = $resolve($inputValues);
     }
     catch (MissingHostEntityException $e) {
       // EntityFieldPropSources cannot be validated in isolation, only in the
       // context of a host content entity.
       if ($entity === NULL) {
-        // This case can only be hit when using a EntityFieldPropSource
-        // inappropriately, which is validated elsewhere.
+        // Either a EntityFieldPropSource is used inappropriately, or the tree
+        // has no host entity (a config entity such as a Content Template):
+        // both are validated elsewhere, and nothing is validated here, as
+        // before references existed.
         // @see \Drupal\canvas\Plugin\Validation\Constraint\ComponentTreeMeetsRequirementsConstraintValidator
-        return $violations;
+        if (!$covered_by_reference) {
+          return $violations;
+        }
+        // The instance is covered by a reference, which has no host to give
+        // here: its links are checked at tree level against the reference. The
+        // other props are still validated: leave out only the props that need
+        // a host.
+        $unresolvable_props = \array_keys(\array_filter($inputValues, static fn (array $source) => \in_array($source['sourceType'], ComponentTreeItem::LINK_SOURCE_TYPES, TRUE)));
+        if ($unresolvable_props === []) {
+          return $violations;
+        }
+        try {
+          $resolvedInputValues = $resolve(\array_diff_key($inputValues, \array_flip($unresolvable_props)));
+        }
+        catch (MissingHostEntityException) {
+          return $violations;
+        }
       }
       // Some component inputs (SDC props) may not be resolvable yet because\
       // required fields do not yet have values specified.
@@ -881,6 +1057,11 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
 
         if (\str_contains($prop_name, '/')) {
           [, $prop_name] = \explode('/', $prop_name);
+        }
+        // What a link-sourced prop lacks is not a problem of the instance: its
+        // value comes from the reference.
+        if (\in_array($prop_name, $unresolvable_props, TRUE)) {
+          continue;
         }
         $violations->add(
           new ConstraintViolation(
@@ -949,13 +1130,17 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
 
     // Get suggested non-static prop sources for component instances on
     // content templates.
+    // A page tree's link target comes with the request; that of a content
+    // template is the entity it is for. The linker is only offered to
+    // those who may link on a page: others see existing links, read-only.
+    // @see \Drupal\canvas\Form\ComponentInstanceForm::buildForm()
+    $may_link = $form_state->get('canvas_may_link') ?? TRUE;
+    $link_target = $form_state->get('canvas_link_target')
+      ?? ($entity instanceof TargetEntityDataDefinitionProviderInterface ? $entity->getTargetEntityDataDefinition() : NULL);
     $suggestions = NULL;
-    if ($entity instanceof ContentTemplate) {
-      $suggestions = PropSourceSuggester::structureSuggestionsForHierarchicalResponse($this->propSourceSuggester->suggest(
-        $this->getSourceSpecificComponentId(),
-        $this->getMetadata(),
-        $entity->getTargetEntityDataDefinition(),
-      ));
+    if ($link_target !== NULL) {
+      $raw = $this->propSourceSuggester->suggest($this->getSourceSpecificComponentId(), $this->getMetadata(), $link_target);
+      $suggestions = PropSourceSuggester::structureSuggestionsForHierarchicalResponse($raw);
     }
 
     foreach ($prop_field_definitions as $sdc_prop_name => $static_prop_source_field_definition) {
@@ -1029,8 +1214,8 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
       $form[$sdc_prop_name] = $source->formTemporaryRemoveThisExclamationExclamationExclamation($widget, $sdc_prop_name, $is_required, $entity_object_for_field_widget, $form, $form_state);
       $form[$sdc_prop_name]['#disabled'] = $disabled;
 
-      if ($entity instanceof ContentTemplate) {
-        $could_use_dynamic_prop_source = !empty($suggestions[$sdc_prop_name]);
+      if ($link_target !== NULL) {
+        $could_use_dynamic_prop_source = $may_link && !empty($suggestions[$sdc_prop_name]);
 
         // If the prop is already linked, replace the widget entirely. The
         // replacement will show the linker by the field label, and replace the
@@ -1043,10 +1228,11 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
             '#sdc_prop_name' => $sdc_prop_name,
             '#sdc_prop_label' => $label,
             '#prop_source' => $linkable_prop_source,
-            '#entity_data_definition' => $entity->getTargetEntityDataDefinition(),
-            '#field_link_suggestions' => $suggestions[$sdc_prop_name],
+            '#entity_data_definition' => $link_target,
+            '#field_link_suggestions' => $suggestions[$sdc_prop_name] ?? [],
             '#description' => $component_schema['properties'][$sdc_prop_name]['description'] ?? NULL,
             '#is_required' => $is_required,
+            '#read_only' => !$may_link,
           ];
         }
         // If the prop can be linked, but isn't yet, add attributes that will
@@ -1082,7 +1268,7 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
       }
     }
     $form['#attached']['canvas-transforms'] = $transforms;
-    if ($entity instanceof ContentTemplate) {
+    if ($link_target !== NULL) {
       $form['#after_build'][] = [static::class, 'moveSuggestionsToLabel'];
     }
     return $form;

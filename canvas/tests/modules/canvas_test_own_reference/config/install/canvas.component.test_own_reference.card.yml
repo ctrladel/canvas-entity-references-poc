@@ -1,0 +1,17 @@
+langcode: en
+status: true
+dependencies:
+  enforced:
+    module:
+      - canvas_test_own_reference
+active_version: 3b12c0b99a6caecc
+versioned_properties:
+  active:
+    settings: {  }
+    fallback_metadata:
+      slot_definitions: {  }
+label: 'Card of its own entity'
+id: test_own_reference.card
+provider: canvas_test_own_reference
+source: test_own_reference
+source_local_id: card

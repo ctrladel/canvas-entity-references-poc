@@ -32,5 +32,28 @@ function canvas_test_field_access_entity_field_access(string $operation, FieldDe
     )->cachePerPermissions();
   }
 
+  // A field that only those who may edit components can view.
+  if ($field_definition->getTargetEntityTypeId() === 'node'
+    && $field_definition->getName() == 'field_view_restricted'
+    && $operation == 'view'
+  ) {
+    return AccessResult::forbiddenIf(
+      condition: !$account->hasPermission('edit canvas page components'),
+      reason: 'You do not have permission to view this field.'
+    )->cachePerPermissions();
+  }
+
+  // A field that only a permission of its own, which has no bearing on editing,
+  // lets a user view.
+  if ($field_definition->getTargetEntityTypeId() === 'node'
+    && $field_definition->getName() == 'field_secret_reference'
+    && $operation == 'view'
+  ) {
+    return AccessResult::forbiddenIf(
+      condition: !$account->hasPermission('view secret reference field'),
+      reason: 'You do not have permission to view this field.'
+    )->cachePerPermissions();
+  }
+
   return AccessResult::neutral();
 }

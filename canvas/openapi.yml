@@ -3083,6 +3083,111 @@ paths:
                   error:
                     type: string
                     description: Error description
+  /canvas/api/v0/tree-reference/targets:
+    get:
+      summary: The entity types and bundles a component can be linked to
+      responses:
+        '200':
+          description: Targets grouped by entity type
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [groups]
+                additionalProperties: false
+                properties:
+                  groups:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, label, options]
+                      additionalProperties: false
+                      properties:
+                        id:
+                          type: string
+                        label:
+                          type: string
+                        options:
+                          type: object
+                          description: Bundle labels keyed `entity_type_id:bundle`.
+                          additionalProperties:
+                            type: string
+  /canvas/api/v0/tree-reference/search/{type}/{bundle}:
+    get:
+      summary: Find entities of a type and bundle that the current user can view
+      parameters:
+        - name: type
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: bundle
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: At most 20 results
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 20
+                items:
+                  type: object
+                  required: [reference, label]
+                  additionalProperties: false
+                  properties:
+                    reference:
+                      type: string
+                    label:
+                      type: string
+        '404':
+          description: Not something a component can link to
+  /canvas/api/v0/tree-reference/info/{type}/{bundle}/{uuid}:
+    get:
+      summary: Describe a reference
+      parameters:
+        - name: type
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: bundle
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: uuid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: >
+            `ok` with a label; `missing` when it was deleted or has another
+            bundle; `restricted` when the user can't view it, without a label.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                additionalProperties: false
+                properties:
+                  status:
+                    type: string
+                    enum: [ok, missing, restricted]
+                  label:
+                    type: string
+        '404':
+          description: Not something a component can link to
   /canvas/api/v0/media/{media_type}/upload:
     description: Upload a file and create a media entity
     parameters:
@@ -4413,6 +4518,13 @@ components:
                     type: array
                     items:
                       type: string
+        ownReferenceRequirement:
+          type: array
+          description: Only when the component uses the entity of its own reference, as `entity_type_id:bundle` of each bundle that fits. Only those fit, and a reference above is never used.
+          minItems: 1
+          items:
+            type: string
+            pattern: '^[a-z0-9_]+:[a-z0-9_]+$'
         propSources:
           type: object
           description: the StaticPropSources to use for each SDC prop
@@ -4642,6 +4754,20 @@ components:
           # Either null, or specify a non-empty string.
           minLength: 1
           description: The (optional) name of the component instance
+        reference:
+          type: string
+          pattern: "^(?:[a-z0-9_]+:[a-z0-9_]+:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|field:[a-z][a-z0-9_]{0,31})$"
+          description: >
+            The content entity this component instance and the components in its
+            slots link to, as `entity_type_id:bundle:uuid`, or a field of the
+            entity in scope that points at it, as `field:<field name>`. Absent
+            when there is none. A type without bundles repeats its ID as bundle.
+        referenceTarget:
+          type: string
+          pattern: "^[a-z0-9_]+:[a-z0-9_]+$"
+          description: >
+            For a field reference that can be followed, the `entity_type_id:bundle`
+            it points at, which the client cannot work out from the field name.
         slots:
           type: array
           description: Array of slots

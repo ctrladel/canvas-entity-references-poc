@@ -63,6 +63,11 @@ final class HostEntityUrlPropSource extends PropSourceBase implements LinkablePr
     if ($host_entity === NULL) {
       throw new MissingHostEntityException();
     }
+    // An entity that is not saved yet has no URL: a stand-in host, such as the
+    // one a component under a reference is converted against.
+    if ($host_entity->isNew()) {
+      return new EvaluationResult(NULL);
+    }
     $generated_url = $host_entity->toUrl($this->rel)
       ->setAbsolute($this->absolute)
       ->toString(collect_bubbleable_metadata: TRUE);

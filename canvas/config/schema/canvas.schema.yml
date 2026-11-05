@@ -487,6 +487,16 @@ canvas.component_tree_node:
       # duplicate error messages.
       type: string
       label: 'UUID of the component instance'
+    reference:
+      type: string
+      # Omitting the key means there is no reference.
+      requiredKey: false
+      label: 'Entity this component instance and its slots link to'
+      constraints:
+        # Either a picked entity, `entity_type_id:bundle:uuid`, or a field of the
+        # entity in scope, `field:<field name>`.
+        Regex:
+          pattern: '/^([a-z0-9_]+:[a-z0-9_]+:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|field:[a-z][a-z0-9_]{0,31})$/'
     component_id:
       type: string
       label: 'Component config entity ID'
@@ -1192,7 +1202,8 @@ canvas.content_template.*.*.*:
           inputs:
             absence:
               - adapter
-            # The only Canvas component tree that allows `entity-field` and `host-entity-url`!
+            # The only Canvas component tree that allows `entity-field` and `host-entity-url` without a
+            # reference covering them!
             # @see \Drupal\canvas\PropSource\EntityFieldPropSource
             # @see \Drupal\canvas\PropSource\HostEntityUrlPropSource
             presence: ~

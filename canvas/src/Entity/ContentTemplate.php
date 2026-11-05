@@ -71,7 +71,7 @@ use Drupal\Core\StringTranslation\TranslatableMarkup;
     'page_variant',
   ],
 )]
-final class ContentTemplate extends ComponentTreeConfigEntityBase implements CanvasHttpApiEligibleConfigEntityInterface, EmptyTargetEntityProviderInterface, EntityViewDisplayInterface, AutoSavePublishAwareInterface {
+final class ContentTemplate extends ComponentTreeConfigEntityBase implements CanvasHttpApiEligibleConfigEntityInterface, EmptyTargetEntityProviderInterface, EntityViewDisplayInterface, AutoSavePublishAwareInterface, TargetEntityDataDefinitionProviderInterface {
 
   public const string ENTITY_TYPE_ID = 'content_template';
 
@@ -414,23 +414,8 @@ final class ContentTemplate extends ComponentTreeConfigEntityBase implements Can
    * {@inheritdoc}
    */
   public function onDependencyRemoval(array $dependencies): bool {
+    // Linked props whose dependency is removed are reset by the parent class.
     $changed = FALSE;
-    $tree = $this->getComponentTree();
-
-    foreach ($dependencies as $type => $dependencies_of_type) {
-      foreach ($dependencies_of_type as $dependency) {
-        if ($dependency instanceof ConfigEntityInterface) {
-          $dependency = $dependency->getConfigDependencyName();
-        }
-        foreach ($tree as $item) {
-          \assert($item instanceof ComponentTreeItem);
-          $changed |= $item->updatePropSourcesOnDependencyRemoval($type, $dependency);
-        }
-      }
-    }
-    if ($changed) {
-      $this->setComponentTree($tree->getValue());
-    }
 
     // Drop a stale page variant selection instead of letting the config
     // dependency system cascade-delete this template when the selected variant

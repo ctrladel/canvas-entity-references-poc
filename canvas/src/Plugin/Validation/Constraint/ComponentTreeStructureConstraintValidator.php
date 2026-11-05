@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace Drupal\canvas\Plugin\Validation\Constraint;
 
+use Drupal\canvas\ComponentTreeReference;
+use Drupal\canvas\ComponentTreeReferenceTargets;
 use Drupal\canvas\Entity\Component;
 use Drupal\canvas\Entity\ContentTemplate;
+use Drupal\canvas\OwnReferenceRequirements;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList;
 use Drupal\Core\Config\Plugin\Validation\Constraint\ConfigExistsConstraint;
 use Drupal\Core\Config\Schema\Sequence;
@@ -102,6 +105,18 @@ final class ComponentTreeStructureConstraintValidator extends ConstraintValidato
     // @todo Re-assess this in https://www.drupal.org/project/canvas/issues/3462235: if that introduces TypedData objects, then this could be simplified.
     $non_typed_data_validator = $this->validatorFactory->createValidator();
 
+    // A reference that is as it was stored is not checked again: it may have
+    // gone stale (its field or bundle was deleted) without anyone touching it,
+    // and that must not stop the page from being saved. Where the stored
+    // version is read from is only worked out once a reference needs it.
+    $entity_root = $this->context->getRoot();
+    $field_name = \strtok($this->context->getPropertyPath(), '.') ?: NULL;
+    $previous = $constraint->previousItems === [] ? NULL : $constraint->previousItems;
+    $unchanged = static function (array $items) use ($entity_root, $field_name, &$previous): array {
+      $previous ??= ComponentTreeReference::storedItems($entity_root instanceof EntityAdapter ? $entity_root->getEntity() : NULL, $field_name);
+      return ComponentTreeReference::unchangedHolders($items, $previous);
+    };
+
     // Constraint to validate each component instance, which is represented in
     // the value by a "uuid,component" tuple.
     $component_instance_constraint = new Sequentially(
@@ -139,6 +154,11 @@ final class ComponentTreeStructureConstraintValidator extends ConstraintValidato
             new Type('string'),
             new LengthConstraint(max: 255),
           ]),
+          'reference' => new Optional([
+            new NotBlank(allowNull: TRUE),
+            new Type('string'),
+            new Callback(callback: self::validateReference(...), payload: ['unchanged' => $unchanged]),
+          ]),
         ], allowExtraFields: TRUE),
         new Callback(
           callback: self::validateComponentInstance(...),
@@ -157,6 +177,8 @@ final class ComponentTreeStructureConstraintValidator extends ConstraintValidato
         new Type('array'),
         new All([$component_instance_constraint]),
         new Callback(self::validateUuidUniqueness(...)),
+        new Callback(callback: self::validateFieldReferences(...), payload: ['root' => $this->context->getRoot(), 'unchanged' => $unchanged]),
+        new Callback(callback: self::validateOwnReferences(...), payload: ['root' => $this->context->getRoot(), 'unchanged' => $unchanged]),
       ]),
     ]);
 
@@ -203,6 +225,88 @@ final class ComponentTreeStructureConstraintValidator extends ConstraintValidato
       return \trim(\substr($new_path, \strlen($context_path)), '.');
     }
     return $new_path;
+  }
+
+  /**
+   * A reference must be written right and point at something that can be linked.
+   *
+   * The entity may be gone (that is allowed and renders as no value), but its
+   * type and bundle must be a target. Anything else would have to be skipped
+   * wherever it is read, so it is refused where it comes in.
+   *
+   * @see \Drupal\canvas\ComponentTreeReferenceTargets::isAllowed()
+   */
+  private static function validateReference(mixed $reference, ExecutionContextInterface $context, array $payload = []): void {
+    if (!\is_string($reference) || $reference === '') {
+      return;
+    }
+    // The path of the value is `[<delta>][reference]` in the tree.
+    $tree = $context->getRoot();
+    if (\is_array($tree) && isset($payload['unchanged']) && \preg_match('/^\[(\d+)\]\[reference\]$/', $context->getPropertyPath(), $matches)) {
+      $uuid = $tree[(int) $matches[1]]['uuid'] ?? NULL;
+      if (\is_string($uuid) && ($payload['unchanged']($tree)[$uuid] ?? FALSE)) {
+        return;
+      }
+    }
+    if (!\Drupal::service(ComponentTreeReferenceTargets::class)->isValidReference($reference)) {
+      // Written right, but to a content type or bundle that is gone (or that
+      // cannot be linked to): say that, not how a reference is written.
+      $message = ComponentTreeReference::tryFromString($reference) !== NULL
+        ? '%reference refers to a content type or bundle that no longer exists, or to content that a component cannot link to.'
+        : '%reference is not a reference to content that a component can link to. It must be written entity_type_id:bundle:uuid, or field:<field name>.';
+      $context->buildViolation($message, ['%reference' => $reference])
+        ->addViolation();
+    }
+  }
+
+  /**
+   * A field reference must be a field its scope can be read from.
+   *
+   * What the scope is depends on the references above it, and on the entity
+   * the tree belongs to. Where that entity is not known (a bare array is
+   * validated, as the client's layout is before conversion), the caller checks.
+   *
+   * @see \Drupal\canvas\ComponentTreeReference::coverageInItems()
+   */
+  private static function validateFieldReferences(array $tree, ExecutionContextInterface $context, array $payload): void {
+    $root = $payload['root'];
+    if (!$root instanceof EntityAdapter) {
+      return;
+    }
+    $items = \array_values(\array_filter($tree, static fn ($item) => \is_array($item) && isset($item['uuid']) && \is_string($item['uuid'])));
+    $coverages = ComponentTreeReference::coverageInItems($items, static fn (): ?string => ComponentTreeReference::rootTarget($root->getEntity()));
+    $unchanged = NULL;
+    foreach ($tree as $key => $item) {
+      $coverage = \is_array($item) && isset($item['uuid']) && \is_string($item['uuid']) ? ($coverages[$item['uuid']] ?? NULL) : NULL;
+      if ($coverage !== NULL && $coverage->holderUuid === $item['uuid'] && $coverage->isField() && !$coverage->isResolved()) {
+        $unchanged ??= $payload['unchanged']($items);
+        if (isset($unchanged[$item['uuid']])) {
+          continue;
+        }
+        $context->buildViolation('%reference is not a field that can be the source of a reference here. It must be an entity reference field of the entity in scope that points at one type and bundle of content.', ['%reference' => $coverage->stored])
+          ->atPath(\sprintf('[%s][reference]', $key))
+          ->addViolation();
+      }
+    }
+  }
+
+  /**
+   * A component that uses the entity of its own reference needs one that fits.
+   *
+   * @see \Drupal\canvas\ComponentSource\ComponentSourceInterface::getOwnReferenceRequirement()
+   */
+  private static function validateOwnReferences(array $tree, ExecutionContextInterface $context, array $payload): void {
+    $root = $payload['root'];
+    $items = \array_values(\array_filter($tree, static fn ($item) => \is_array($item) && isset($item['uuid']) && \is_string($item['uuid'])));
+    if (!\array_filter($items, static fn ($item) => isset($item['reference']) && $item['reference'] !== '')) {
+      return;
+    }
+    $coverages = ComponentTreeReference::coverageInItems($items, static fn (): ?string => $root instanceof EntityAdapter ? ComponentTreeReference::rootTarget($root->getEntity()) : NULL);
+    foreach (OwnReferenceRequirements::mismatches($tree, $coverages, $payload['unchanged']($items)) as $key => $message) {
+      $context->buildViolation('%message', ['%message' => $message])
+        ->atPath(\sprintf('[%s][reference]', $key))
+        ->addViolation();
+    }
   }
 
   private static function validateComponentInstance(array $component_instance, ExecutionContextInterface $context, array $payload): void {

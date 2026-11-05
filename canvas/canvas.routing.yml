@@ -680,6 +680,61 @@ canvas.api.log_error:
   options:
     _format: 'json'
 
+# Routes for choosing and describing the entity a component tree reference
+# points at. They need access to the editor, not the permission to link: other
+# pickers build on them too.
+canvas.api.tree_reference.targets:
+  path: '/canvas/api/v0/tree-reference/targets'
+  defaults:
+    _controller: 'Drupal\canvas\Controller\ApiTreeReferenceController::targets'
+  requirements:
+    _canvas_authentication_required: TRUE
+    _canvas_ui_access: 'TRUE'
+    _format: 'json'
+  methods: [GET]
+
+canvas.api.tree_reference.search:
+  path: '/canvas/api/v0/tree-reference/search/{type}/{bundle}'
+  defaults:
+    _controller: 'Drupal\canvas\Controller\ApiTreeReferenceController::search'
+  requirements:
+    _canvas_authentication_required: TRUE
+    _canvas_ui_access: 'TRUE'
+    _format: 'json'
+  methods: [GET]
+
+canvas.api.tree_reference.fields:
+  path: '/canvas/api/v0/tree-reference/fields/{type}/{bundle}'
+  defaults:
+    _controller: 'Drupal\canvas\Controller\ApiTreeReferenceController::fields'
+  requirements:
+    _canvas_authentication_required: TRUE
+    _canvas_ui_access: 'TRUE'
+    _format: 'json'
+  methods: [GET]
+
+canvas.api.tree_reference.field_info:
+  path: '/canvas/api/v0/tree-reference/field-info/{type}/{bundle}/{field}'
+  defaults:
+    _controller: 'Drupal\canvas\Controller\ApiTreeReferenceController::fieldInfo'
+  requirements:
+    _canvas_authentication_required: TRUE
+    _canvas_ui_access: 'TRUE'
+    field: '[a-z][a-z0-9_]{0,31}'
+    _format: 'json'
+  methods: [GET]
+
+canvas.api.tree_reference.info:
+  path: '/canvas/api/v0/tree-reference/info/{type}/{bundle}/{uuid}'
+  defaults:
+    _controller: 'Drupal\canvas\Controller\ApiTreeReferenceController::info'
+  requirements:
+    _canvas_authentication_required: TRUE
+    _canvas_ui_access: 'TRUE'
+    uuid: '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+    _format: 'json'
+  methods: [GET]
+
 canvas.api.media.upload:
   path: '/canvas/api/v0/media/{media_type}/upload'
   defaults:

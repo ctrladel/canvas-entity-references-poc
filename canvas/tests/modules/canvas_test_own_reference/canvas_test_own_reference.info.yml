@@ -1,0 +1,6 @@
+name: 'Test component that uses the entity of its own reference'
+type: module
+description: 'A component source whose instances require their own reference to point at an article.'
+package: Testing
+dependencies:
+  - canvas:canvas

@@ -12,6 +12,7 @@ use Drupal\Component\Utility\SortArray;
 use Drupal\Core\Config\Schema\Mapping;
 use Drupal\Core\Config\TypedConfigManagerInterface;
 use Drupal\Core\Entity\FieldableEntityInterface;
+use Drupal\Core\Entity\TypedData\EntityDataDefinitionInterface;
 use Drupal\Core\Plugin\ContextAwarePluginAssignmentTrait;
 use Drupal\Core\Plugin\ContextAwarePluginTrait;
 use Drupal\Core\Plugin\PluginBase;
@@ -167,6 +168,20 @@ abstract class ComponentSourceBase extends PluginBase implements ComponentSource
    *   - …
    */
   abstract protected function getExplicitInputDefinitions(): array;
+
+  /**
+   * {@inheritdoc}
+   */
+  public function getOwnReferenceRequirement(): ?EntityDataDefinitionInterface {
+    return NULL;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function refusesOwnReference(): bool {
+    return FALSE;
+  }
 
   /**
    * {@inheritdoc}

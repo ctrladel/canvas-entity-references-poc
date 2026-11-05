@@ -8,6 +8,7 @@ use Drupal\canvas\PropSource\LinkablePropSourceInterface;
 use Drupal\Core\Entity\TypedData\EntityDataDefinitionInterface;
 use Drupal\Core\Render\Attribute\RenderElement;
 use Drupal\Core\Render\Element\RenderElementBase;
+use Drupal\Core\StringTranslation\TranslatableMarkup;
 
 #[RenderElement('linked_prop')]
 class LinkedProp extends RenderElementBase {
@@ -27,6 +28,7 @@ class LinkedProp extends RenderElementBase {
    *   hierarchical labels).
    * - #field_link_suggestions: An array of field name suggestions for linking.
    * - #is_required: Whether the prop is required.
+   * - #read_only: Whether the link can't be changed or removed here.
    *
    * @see \Drupal\canvas\PropSource\LinkablePropSourceInterface
    */
@@ -43,6 +45,7 @@ class LinkedProp extends RenderElementBase {
       '#entity_data_definition' => NULL,
       '#field_link_suggestions' => [],
       '#is_required' => FALSE,
+      '#read_only' => FALSE,
       '#attributes' => [
         'class' => ['canvas-linked-prop-wrapper'],
       ],
@@ -65,7 +68,14 @@ class LinkedProp extends RenderElementBase {
     $is_required = $element['#is_required'] ?? FALSE;
 
     \assert($entity_data_definition instanceof EntityDataDefinitionInterface);
-    $title = (string) $prop_source->label($entity_data_definition);
+    try {
+      $title = (string) $prop_source->label($entity_data_definition);
+    }
+    catch (\LogicException) {
+      // The field the link names was deleted. The link stays visible, so it can
+      // be removed, but there is no label to build.
+      $title = (string) new TranslatableMarkup('Field no longer available');
+    }
 
     $element['label_wrap'] = [
       '#type' => 'container',
@@ -77,7 +87,7 @@ class LinkedProp extends RenderElementBase {
         '#title' => $sdc_prop_label,
         '#required' => $is_required,
       ],
-      'post_label' => [
+      'post_label' => $element['#read_only'] ? [] : [
         // @see ui/src/components/form/components/drupal/PropLinker.tsx, the
         // template that renders `prop_linker`.
         '#theme' => 'prop_linker',

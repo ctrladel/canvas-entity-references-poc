@@ -1,3 +1,7 @@
 edit canvas page components:
   title: 'Edit Canvas Page components'
   description: 'Edit the components field on Canvas Pages'
+
+view secret reference field:
+  title: 'View the secret reference field'
+  description: 'View the field_secret_reference field of articles, which no other access touches'

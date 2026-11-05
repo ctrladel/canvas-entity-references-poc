@@ -148,6 +148,7 @@ final class SingleDirectoryComponent extends JsonSchemaPropsComponentSourceBase 
    * {@inheritdoc}
    */
   public function renderComponent(array $inputs, array $slot_definitions, string $componentUuid, bool $isPreview = FALSE): array {
+    $this->logLinkFallbacks($inputs, $componentUuid, $isPreview);
     // Fetch the prop schemas before resolving props so that color props can be
     // transformed to rich objects. If the underlying SDC plugin is unavailable
     // (broken component), pass an empty schema array: color resolution is
@@ -160,7 +161,7 @@ final class SingleDirectoryComponent extends JsonSchemaPropsComponentSourceBase 
       $prop_schemas = [];
     }
 
-    [$props, $props_bubbleable_metadata] = $this->getResolvedPropsAndBubbleableMetadata($inputs[self::EXPLICIT_INPUT_NAME] ?? [], $prop_schemas);
+    [$props, $props_bubbleable_metadata] = $this->getResolvedPropsAndBubbleableMetadata($inputs[self::EXPLICIT_INPUT_NAME] ?? [], $prop_schemas, $inputs[self::OMITTED_CACHEABILITY] ?? NULL);
 
     // Color props are resolved from strings to rich objects by
     // getResolvedPropsAndBubbleableMetadata(), but the schema declares them as

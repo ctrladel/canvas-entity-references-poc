@@ -76,12 +76,15 @@ class ClientDataToEntityConverter {
     ['layout' => $layout, 'model' => $model, 'entity_form_fields' => $entity_form_fields] = $client_data;
 
     $item_list = $this->componentTreeLoader->load($entity);
+    // The tree this request replaces: a reference that is unchanged in it is
+    // not checked again.
+    $previous_items = \array_values($item_list->getValue());
     try {
       \assert(count(array_intersect(['nodeType', 'id', 'name', 'components'], \array_keys($layout))) === 4);
       \assert($layout['nodeType'] === 'region');
       \assert($layout['id'] === 'content');
       \assert(\is_array($layout['components']));
-      $item_list->setValue(self::convertClientToServer($layout['components'], $model, $entity, $validate));
+      $item_list->setValue(self::convertClientToServer($layout['components'], $model, $entity, $validate, $previous_items));
     }
     catch (ConstraintViolationException $e) {
       // @todo Remove iterator_to_array() after https://www.drupal.org/project/drupal/issues/3497677

@@ -1,0 +1,12 @@
+canvas.component_source_local_id.test_own_reference:
+  type: canvas.component_source_local_id.*
+  label: 'Test component ID'
+  constraints:
+    FullyValidatable: ~
+    Choice:
+      - card
+canvas.component_source_settings.test_own_reference:
+  type: canvas.component_source_settings.*
+  label: 'Test component settings'
+  constraints:
+    FullyValidatable: ~

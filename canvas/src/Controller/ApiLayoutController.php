@@ -8,6 +8,7 @@ use Drupal\canvas\AutoSave\AutoSaveManager;
 use Drupal\canvas\CanvasUriDefinitions;
 use Drupal\canvas\ClientDataToEntityConverter;
 use Drupal\canvas\ComponentSource\ComponentSourceManager;
+use Drupal\canvas\ComponentTreeReference;
 use Drupal\canvas\Entity\Component;
 use Drupal\canvas\Entity\ComponentTreeConfigEntityBase;
 use Drupal\canvas\Entity\ComponentTreeEntityInterface;
@@ -787,14 +788,30 @@ final class ApiLayoutController {
       $component = $item->getComponent()?->loadVersion($version);
       \assert($component instanceof Component);
       $item->set('component_version', $version);
-      $item->setInput(
-        $component->getComponentSource()->clientModelToInput(
-          $componentInstanceUuid,
-          $component,
-          $client_model,
-          $host_entity
-        )
+      // Under a reference, convert against a stand-in for its target: the
+      // tree's host has other fields.
+      $covering = $tree->getNearestReference($componentInstanceUuid);
+      $kept_links = [];
+      if ($covering !== NULL) {
+        // A reference that can't be followed has nothing to read: the links
+        // under it stay as stored and are out of the conversion. Changing one
+        // is refused.
+        $host_entity = $covering->isResolved() ? ComponentTreeReference::createStandIn((string) $covering->entityTypeId, (string) $covering->bundle) : NULL;
+        if (!$covering->isResolved()) {
+          $stored_inputs = $item->getValue()['inputs'] ?? [];
+          [$client_model, $kept_links] = self::withoutLinkedProps($client_model, $stored_inputs, $componentInstanceUuid);
+        }
+      }
+      $inputs = $component->getComponentSource()->clientModelToInput(
+        $componentInstanceUuid,
+        $component,
+        $client_model,
+        $host_entity
       );
+      if ($kept_links !== [] && \is_array($inputs)) {
+        $inputs = self::putBackLinkedProps($inputs, $kept_links, $stored_inputs);
+      }
+      $item->setInput($inputs);
       if ($entity instanceof ComponentTreeEntityInterface) {
         // This might be dangling item list so we should update explicitly.
         $entity->setComponentTree($tree->getValue());
@@ -837,7 +854,10 @@ final class ApiLayoutController {
       //   as well in https://drupal.org/i/3543197.
       // @todo Remove php-stan-ignore in https://drupal.org/i/3548273.
       // @phpstan-ignore-next-line argument.type
-      $entity->setComponentTree(self::convertClientToServer($layout['components'], $model, $host_entity, FALSE));
+      // The tree this request replaces: a reference that is unchanged in it is
+      // not checked again, like on a content entity.
+      $previous_items = \array_values($entity->getComponentTree()->getValue());
+      $entity->setComponentTree(self::convertClientToServer($layout['components'], $model, $host_entity, FALSE, $previous_items));
     }
   }
 
