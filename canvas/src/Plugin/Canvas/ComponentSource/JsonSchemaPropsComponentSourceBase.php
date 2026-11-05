@@ -1170,6 +1170,10 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
 
     $form['#attached']['canvas-transforms'] = [];
     foreach ($prop_field_definitions as $sdc_prop_name => $static_prop_source_field_definition) {
+      // ::clientModelToInput() guarantees $inputValues contains a value for
+      // every required prop, even when a required property is allowed to be
+      // empty during editing for improved usability.
+      \assert(\array_key_exists($sdc_prop_name, $inputValues) || !\in_array($sdc_prop_name, $this->getExplicitInputDefinitions()['required'], TRUE));
       ['element' => $element, 'linkable' => $linkable_prop_source, 'label' => $label, 'required' => $is_required] = $this->buildPropElementWithSource($form, $form_state, $component, $sdc_prop_name, $sdc_prop_name, $inputValues[$sdc_prop_name] ?? NULL, $entity_object_for_field_widget);
       $form[$sdc_prop_name] = $element;
 
