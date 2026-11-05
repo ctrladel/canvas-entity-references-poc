@@ -51,7 +51,7 @@ export interface EntityBindingSourceGroup {
 export type EntityBindingTone = 'default' | 'muted' | 'warning';
 
 export interface EntityBindingMenuProps {
-  // Names what is being linked, for assistive technology: "Link this component
+  // Names what is being linked, for assistive technology: "Link this pattern
   // to content".
   label: string;
   // Shown on hover and focus. Defaults to the label.
@@ -63,7 +63,7 @@ export interface EntityBindingMenuProps {
   onChange: (value: string | null) => void;
   onOpenChange?: (open: boolean) => void;
   disabled?: boolean;
-  // Everything below is optional, and leaves the menu plain.
+  // Everything below is optional, and leaves the menu as it is for a Pattern.
   // The text of the first radio, the choice of no link of its own. Defaults to
   // "Not linked"; where an ancestor links, it names what is inherited.
   emptyLabel?: string;
@@ -72,6 +72,8 @@ export interface EntityBindingMenuProps {
   // A label above the types and bundles, and the groups of other sources
   // after them.
   groupsLabel?: string;
+  // Muted text under the label, for what the choices have in common.
+  groupsNote?: string;
   sources?: EntityBindingSourceGroup[];
   // Items that are not choices, such as "Change content…". Shown last.
   actions?: ReactNode;
@@ -98,7 +100,7 @@ export interface EntityBindingMenuProps {
  * It looks and behaves like the `PropLinker` of component props: a link icon,
  * highlighted when linked, opening a dropdown menu. One click opens it and a
  * second chooses, which `onChange` receives at once. It knows nothing of what
- * is linked.
+ * is linked, so a component can use it as well as a Pattern.
  */
 const EntityBindingMenu = ({
   label,
@@ -111,6 +113,7 @@ const EntityBindingMenu = ({
   emptyLabel = 'Not linked',
   header,
   groupsLabel,
+  groupsNote,
   sources = [],
   actions,
   linked: linkedOverride,
@@ -184,6 +187,11 @@ const EntityBindingMenu = ({
             {groupsLabel && groups.length > 0 && (
               <DropdownMenu.Label>
                 {groupsLabel}
+                {groupsNote && (
+                  <Text as="div" size="1" color="gray" weight="regular">
+                    {groupsNote}
+                  </Text>
+                )}
               </DropdownMenu.Label>
             )}
             {groups.map((group) => {

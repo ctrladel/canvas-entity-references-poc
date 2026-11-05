@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { useParams } from 'react-router';
 import { DropdownMenu, Text } from '@radix-ui/themes';
 import { skipToken } from '@reduxjs/toolkit/query';
 
@@ -29,8 +30,13 @@ import {
   canLinkComponentProps,
   setComponentReference,
 } from '@/features/layout/referenceActions';
+import {
+  EditorFrameContext,
+  selectEditorFrameContext,
+} from '@/features/ui/uiSlice';
 import { useReferenceDescription } from '@/hooks/useReferenceDescription';
 import { useGetComponentsQuery } from '@/services/componentAndLayout';
+import { useGetPatternBindingQuery } from '@/services/patternBinding';
 import {
   useGetTreeReferenceFieldsQuery,
   useGetTreeReferenceTargetsQuery,
@@ -73,6 +79,15 @@ const ComponentReference = ({ uuid }: { uuid: string }) => {
   const layout = useAppSelector(selectLayout);
   const model = useAppSelector(selectModel);
   const hostTarget = useAppSelector(selectHostTarget);
+  const isPattern =
+    useAppSelector(selectEditorFrameContext) === EditorFrameContext.PATTERN;
+  const { patternId } = useParams();
+  // A Pattern of several bundles is mapped on one at a time, so the menu says
+  // which.
+  const { data: binding } = useGetPatternBindingQuery(patternId ?? '', {
+    skip: !isPattern || !patternId,
+  });
+  const severalBundles = isPattern && (binding?.targets.length ?? 0) > 1;
   const { data: components } = useGetComponentsQuery();
   const { data: groupsData } = useGetTreeReferenceTargetsQuery();
   const groups = groupsData ?? [];
@@ -207,7 +222,8 @@ const ComponentReference = ({ uuid }: { uuid: string }) => {
       : null;
   const value = own ? (ownBundle ?? own) : null;
   const templateType = typeName(groups, hostTarget);
-  const owner = "this template's";
+  const owner = isPattern ? "this pattern's" : "this template's";
+  const bundleName = severalBundles ? templateType : undefined;
 
   let tooltip = 'Link this component to content';
   let line1: React.ReactNode = (
@@ -232,7 +248,7 @@ const ComponentReference = ({ uuid }: { uuid: string }) => {
       </Text>
     );
     line2 = templateType;
-    emptyLabel = "Inherit: This template's content";
+    emptyLabel = `Inherit: ${isPattern ? 'This pattern' : 'This template'}'s content`;
   } else if (state === 'set') {
     const status = description?.status;
     tooltip =
@@ -256,7 +272,7 @@ const ComponentReference = ({ uuid }: { uuid: string }) => {
     if (above) {
       emptyLabel = `Inherit: ${inheritedWords.title} (from ${ancestorName})`;
     } else if (hostTarget) {
-      emptyLabel = "Inherit: This template's content";
+      emptyLabel = `Inherit: ${isPattern ? 'This pattern' : 'This template'}'s content`;
     }
   }
 
@@ -266,6 +282,11 @@ const ComponentReference = ({ uuid }: { uuid: string }) => {
       {line2 && (
         <Text size="1" color="gray">
           {line2}
+        </Text>
+      )}
+      {bundleName && state === 'set' && ownBundle === null && (
+        <Text size="1" color="gray">
+          Applies to {bundleName}
         </Text>
       )}
     </div>
@@ -290,7 +311,9 @@ const ComponentReference = ({ uuid }: { uuid: string }) => {
       : fieldOptions.length > 0
         ? [
             {
-              label: 'From a field',
+              label: bundleName
+                ? `From a field of ${bundleName.split(': ').pop()}`
+                : 'From a field',
               options: fieldOptions,
             },
           ]
@@ -343,6 +366,9 @@ const ComponentReference = ({ uuid }: { uuid: string }) => {
         }
         header={header}
         emptyLabel={emptyLabel}
+        groupsNote={
+          severalBundles ? 'Picked content applies to all bundles.' : undefined
+        }
         groupsLabel={state === 'none' ? 'Link to' : 'Link at this level'}
         sources={fieldSources}
         actions={

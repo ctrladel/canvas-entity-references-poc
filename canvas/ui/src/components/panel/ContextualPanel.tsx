@@ -16,6 +16,8 @@ import { useAppDispatch, useAppSelector } from '@/app/hooks';
 import ErrorBoundary from '@/components/error/ErrorBoundary';
 import PageDataForm from '@/components/PageDataForm';
 import ComponentReference from '@/components/panel/ComponentReference';
+import LinksForSelector from '@/components/panel/LinksForSelector';
+import PatternBinding from '@/components/panel/PatternBinding';
 import { setCurrentComponent } from '@/features/form/formStateSlice';
 import { selectLayout } from '@/features/layout/layoutModelSlice';
 import { findComponentByUuid } from '@/features/layout/layoutUtils';
@@ -43,13 +45,18 @@ const ContextualPanel: React.FC = () => {
   const dispatch = useAppDispatch();
   const editorFrameContext = useAppSelector(selectEditorFrameContext);
   const layout = useAppSelector(selectLayout);
-  const { entityId, entityType } = useParams();
+  const { entityId, entityType, patternId } = useParams();
   const isTemplateContext = editorFrameContext === EditorFrameContext.TEMPLATE;
   // Page variants are config entities without entity form fields, so like
   // templates they have no "Page data" tab: the panel only shows component
   // settings.
+  const isPatternContext = editorFrameContext === EditorFrameContext.PATTERN;
+  // Patterns have no entity form fields, so the "Page data" tab would be empty.
+  // Their "Pattern" tab has the binding instead (see PatternBinding).
   const hasPageDataTab =
-    !isTemplateContext && entityType !== PAGE_VARIANT_ENTITY_TYPE;
+    !isTemplateContext &&
+    !isPatternContext &&
+    entityType !== PAGE_VARIANT_ENTITY_TYPE;
   // A single, real component can be linked to content. A marker is not a
   // component with props.
   const selectedNode =
@@ -76,17 +83,24 @@ const ContextualPanel: React.FC = () => {
     } else {
       // No component is selected
       dispatch(setCurrentComponent(''));
-      setActivePanel('pageData');
+      // A Pattern has no page data: its tab row shows the Pattern itself.
+      setActivePanel(isPatternContext ? 'pattern' : 'pageData');
     }
-  }, [dispatch, selectedComponent, isMultiSelect]);
+  }, [dispatch, selectedComponent, isMultiSelect, isPatternContext]);
 
   useEffect(() => {
-    if (!hasPageDataTab && !isMultiSelect && !selectedComponent) {
+    // The Pattern's panel stays: it holds the binding control.
+    if (
+      !hasPageDataTab &&
+      !isPatternContext &&
+      !isMultiSelect &&
+      !selectedComponent
+    ) {
       setHidePanel(true);
     } else {
       setHidePanel(false);
     }
-  }, [selectedComponent, isMultiSelect, hasPageDataTab]);
+  }, [selectedComponent, isMultiSelect, hasPageDataTab, isPatternContext]);
 
   return (
     <Box
@@ -120,6 +134,14 @@ const ContextualPanel: React.FC = () => {
                   {mainTabText}
                 </Tabs.Trigger>
               )}
+              {isPatternContext && (
+                <Tabs.Trigger
+                  value="pattern"
+                  data-testid="canvas-contextual-panel--pattern"
+                >
+                  Pattern
+                </Tabs.Trigger>
+              )}
               {(selectedComponent || isMultiSelect) && (
                 <Tabs.Trigger
                   value="settings"
@@ -137,6 +159,11 @@ const ContextualPanel: React.FC = () => {
             </Tabs.List>
             <ScrollArea scrollbars="vertical" className={styles.scrollArea}>
               <Box px="4" width="100%">
+                {isPatternContext && patternId && (
+                  <Tabs.Content value={'pattern'}>
+                    <PatternBinding key={patternId} patternId={patternId} />
+                  </Tabs.Content>
+                )}
                 <Tabs.Content value={'settings'}>
                   {isMultiSelect && (
                     <Box my="2">
@@ -192,6 +219,9 @@ const ContextualPanel: React.FC = () => {
                         )}
                       </Flex>
                     </Box>
+                  )}
+                  {isPatternContext && selectedComponent && !isMultiSelect && (
+                    <LinksForSelector />
                   )}
                   <ErrorBoundary title="An unexpected error has occurred while rendering the component's form.">
                     <Outlet />

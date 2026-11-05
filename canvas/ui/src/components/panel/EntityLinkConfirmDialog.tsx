@@ -19,7 +19,7 @@ interface EntityLinkConfirmDialogProps {
 
 /**
  * The decision that is too much for a menu: a change that clears links. Used
- * for a component's reference.
+ * for a Pattern's binding and for a component's reference.
  */
 const EntityLinkConfirmDialog = ({
   open,

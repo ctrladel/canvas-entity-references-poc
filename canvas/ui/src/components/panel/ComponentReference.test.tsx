@@ -15,6 +15,10 @@ import {
   selectLayout,
   setInitialLayoutModel,
 } from '@/features/layout/layoutModelSlice';
+import {
+  EditorFrameContext,
+  setEditorFrameContext,
+} from '@/features/ui/uiSlice';
 import { componentAndLayoutApi } from '@/services/componentAndLayout';
 
 const permission = vi.hoisted(() => ({ linking: true }));
@@ -26,6 +30,8 @@ vi.mock('@/utils/permissions', () => ({
 vi.mock('sonner', () => ({
   toast: Object.assign(vi.fn(), { error: vi.fn() }),
 }));
+
+const patternTargets = vi.hoisted(() => ({ value: [] as string[] }));
 
 const ALPHA = 'node:article:11111111-1111-4111-8111-111111111111';
 const BETA = 'node:article:22222222-2222-4222-8222-222222222222';
@@ -108,6 +114,16 @@ const stubServer = (server: Server = { info: {} }) => {
       if (url.includes('session/token')) {
         return new Response('token');
       }
+      if (url.includes('pattern-binding')) {
+        return json({
+          targets: patternTargets.value,
+          mapped: [],
+          linked: {},
+          storedTargets: patternTargets.value,
+          unpublished: false,
+          groups: [],
+        });
+      }
       if (url.includes('tree-reference/targets')) {
         return json(groups);
       }
@@ -181,10 +197,15 @@ const setup = async (
   model: any,
   selected: string,
   hostTarget?: string,
+  // The editor is a Pattern's.
+  inPattern = false,
 ) => {
   const store = makeStore({
     configuration: { ...configuration, baseUrl: 'http://localhost/' },
   });
+  if (inPattern) {
+    store.dispatch(setEditorFrameContext(EditorFrameContext.PATTERN));
+  }
   await store.dispatch(
     componentAndLayoutApi.util.upsertQueryData(
       'getComponents',
@@ -208,7 +229,11 @@ const setup = async (
     } as any),
   );
   render(
-    <AppWrapper store={store} location="/" path="/">
+    <AppWrapper
+      store={store}
+      location={inPattern ? '/pattern/card' : '/'}
+      path={inPattern ? '/pattern/:patternId' : '/'}
+    >
       <ComponentReference uuid={selected} />
     </AppWrapper>,
   );
@@ -722,4 +747,148 @@ describe('ComponentReference', () => {
     });
   });
 
+  describe('in a Pattern', () => {
+    beforeEach(() => {
+      patternTargets.value = [];
+      window.history.pushState({}, '', '/canvas/pattern/card');
+    });
+    const fieldsForArticle = [
+      {
+        reference: 'field:field_author',
+        label: 'Author',
+        target: 'node:article',
+        multiple: false,
+      },
+    ];
+
+    it('offers picked references only when the Pattern is not bound', async () => {
+      stubServer();
+      await setup(
+        [comp('a')],
+        { a: entry(staticHeading) },
+        'a',
+        undefined,
+        true,
+      );
+      const { menu } = await open();
+      expect(
+        await screen.findByRole('menuitem', { name: 'Content' }),
+      ).toBeInTheDocument();
+      expect(within(menu).queryByText('From a field')).toBeNull();
+      expect(within(menu).queryByText(/Applies to (Content|News)/)).toBeNull();
+    });
+
+    it('offers "From a field" of the bundle a bound Pattern is mapped on, without naming a bundle when there is one', async () => {
+      patternTargets.value = ['node:article'];
+      stubServer({ info: {}, fields: fieldsForArticle });
+      await setup(
+        [comp('a')],
+        { a: entry(staticHeading) },
+        'a',
+        'node:article',
+        true,
+      );
+      const { menu } = await open();
+      expect(
+        await screen.findByRole('menuitem', { name: /From a field/ }),
+      ).toBeInTheDocument();
+      await openSub(/From a field/);
+      expect(
+        await screen.findByRole('menuitem', { name: /Author/ }),
+      ).toBeInTheDocument();
+      expect(
+        within(menu).getByText("Linked to this pattern's content"),
+      ).toBeInTheDocument();
+      expect(within(menu).queryByText(/Applies to (Content|News)/)).toBeNull();
+    });
+
+    it('says what each source applies to when the Pattern has several bundles', async () => {
+      patternTargets.value = ['node:article', 'node:news'];
+      stubServer({ info: {}, fields: fieldsForArticle });
+      await setup(
+        [comp('a')],
+        { a: entry(staticHeading) },
+        'a',
+        'node:news',
+        true,
+      );
+      const { menu } = await open();
+      // Fields are for the bundle shown, named where they are offered.
+      expect(
+        await screen.findByRole('menuitem', { name: 'From a field of News' }),
+      ).toBeInTheDocument();
+      // Picked content is for all bundles, and says so.
+      expect(
+        within(menu).getByText('Picked content applies to all bundles.'),
+      ).toBeInTheDocument();
+      // The header of the inherited state does not repeat the bundle.
+      expect(within(menu).queryByText(/Applies to Content/)).toBeNull();
+    });
+
+    it('does not mention bundles when the Pattern has one', async () => {
+      patternTargets.value = ['node:article'];
+      stubServer({ info: {}, fields: fieldsForArticle });
+      await setup(
+        [comp('a')],
+        { a: entry(staticHeading) },
+        'a',
+        'node:article',
+        true,
+      );
+      const { menu } = await open();
+      await screen.findByRole('menuitem', { name: /From a field/ });
+      expect(within(menu).queryByText(/all bundles/)).toBeNull();
+    });
+
+    it('names the bundle shown on a field reference, which applies to it only', async () => {
+      patternTargets.value = ['node:article', 'node:news'];
+      stubServer({ info: {}, fields: fieldsForArticle });
+      await setup(
+        [comp('a', { reference: 'field:field_author' })],
+        { a: entry(staticHeading) },
+        'a',
+        'node:news',
+        true,
+      );
+      const { menu } = await open();
+      expect(
+        await within(menu).findByText('Applies to Content: News'),
+      ).toBeInTheDocument();
+    });
+
+    it('does not name a bundle for content an ancestor links, which the ancestor decides', async () => {
+      patternTargets.value = ['node:article', 'node:news'];
+      stubServer({ info: {}, fields: fieldsForArticle });
+      await setup(
+        [comp('p', { reference: ALPHA }, [comp('a')])],
+        { p: entry(staticHeading), a: entry(staticHeading) },
+        'a',
+        'node:news',
+        true,
+      );
+      const { menu } = await open();
+      expect(
+        await within(menu).findByText(/Linked through/),
+      ).toBeInTheDocument();
+      expect(within(menu).queryByText(/Applies to Content/)).toBeNull();
+    });
+
+    it('is read-only without the permission to link', async () => {
+      patternTargets.value = ['node:article'];
+      permission.linking = false;
+      stubServer();
+      await setup(
+        [comp('a', { reference: ALPHA })],
+        { a: entry(staticHeading) },
+        'a',
+        'node:article',
+        true,
+      );
+      const { menu } = await open();
+      expect(
+        await within(menu).findByText('Alpha article'),
+      ).toBeInTheDocument();
+      expect(screen.queryAllByRole('menuitem')).toHaveLength(0);
+    });
+  });
 });
