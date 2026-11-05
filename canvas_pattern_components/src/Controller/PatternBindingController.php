@@ -5,8 +5,14 @@ declare(strict_types=1);
 namespace Drupal\canvas_pattern_components\Controller;
 
 use Drupal\canvas\AutoSave\AutoSaveManager;
+use Drupal\canvas\Audit\ComponentAudit;
+use Drupal\canvas\Audit\RevisionAuditEnum;
+use Drupal\canvas\Entity\Component;
+use Drupal\canvas\Entity\ContentTemplate;
 use Drupal\canvas\ComponentTreeLinkGuard;
 use Drupal\canvas\Entity\Pattern;
+use Drupal\canvas\Storage\ComponentTreeLoader;
+use Drupal\canvas\TypedData\BetterEntityDataDefinition;
 use Drupal\canvas_pattern_components\PatternLinks;
 use Drupal\Core\Session\AccountInterface;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -29,6 +35,8 @@ final class PatternBindingController {
   public function __construct(
     private readonly PatternLinks $links,
     private readonly AutoSaveManager $autoSaveManager,
+    private readonly ComponentAudit $componentAudit,
+    private readonly ComponentTreeLoader $componentTreeLoader,
     private readonly ComponentTreeLinkGuard $linkGuard,
     private readonly AccountInterface $currentUser,
   ) {}
@@ -69,17 +77,20 @@ final class PatternBindingController {
     }
 
     // Adding bundles loses nothing. Removing some, or changing the entity type,
-    // loses the links of the bundles that go.
+    // loses the links of the bundles that go, and changes the placements that
+    // show them.
     $removed = \array_diff($current, $targets);
     $type_changes = $current !== [] && $targets !== [] && \explode(':', $current[0], 2)[0] !== \explode(':', $targets[0], 2)[0];
     if ($removed !== [] || $type_changes) {
       $gone = $type_changes || $targets === [] ? NULL : \array_map(static fn (string $target): string => \explode(':', $target, 2)[1], $removed);
       $links = PatternLinks::countLinks($editing, $gone);
-      if ($links > 0 && !$confirm) {
+      $placements = $this->countAffectedPlacements($entity, $current, $targets);
+      if (($links > 0 || $placements > 0) && !$confirm) {
         return new JsonResponse([
           'status' => self::CONFIRMATION_REQUIRED,
           'links' => $links,
-          'message' => self::warning($links),
+          'placements' => $placements,
+          'message' => self::warning($links, $placements, $targets === [], $type_changes, $this->labelsOf($removed)),
         ]);
       }
     }
@@ -134,14 +145,100 @@ final class PatternBindingController {
   }
 
   /**
-   * Builds the confirmation text: one short line each, separated by newlines.
+   * Counts the live placements that a binding change affects.
+   *
+   * Placements whose own reference fits the binding now and does not after:
+   * those on content of a bundle that goes, or of another type. The others show
+   * what they showed. When the binding is removed, every placement shows the
+   * static values from then on. Placements that exist only in drafts are not
+   * counted, so this is a minimum.
+   *
+   * @param list<string> $current
+   *   `entity_type_id:bundle` of each bundle the Pattern is bound to.
+   * @param list<string> $targets
+   *   Those it would be bound to.
    */
-  private static function warning(int $links): string {
+  private function countAffectedPlacements(Pattern $stored, array $current, array $targets): int {
+    $component = Component::load('pattern.' . $stored->id());
+    if (!$component instanceof Component) {
+      return 0;
+    }
+    $definition = static function (array $targets): ?BetterEntityDataDefinition {
+      if ($targets === []) {
+        return NULL;
+      }
+      return BetterEntityDataDefinition::create(\explode(':', $targets[0], 2)[0], \array_map(static fn (string $target): string => \explode(':', $target, 2)[1], $targets));
+    };
+    $before = $definition($current);
+    $after = $definition($targets);
+    $count = 0;
+    // The hosts that place the component: the audit finds them.
+    $hosts = [
+      ...$this->componentAudit->getContentRevisionsUsingAuditTarget($component, [], RevisionAuditEnum::Default),
+      // Not getConfigEntityUsageCount(): it also counts the Canvas folder that
+      // lists the Pattern in the library.
+      ...$this->componentAudit->getConfigEntityDependenciesUsingAuditTarget($component, ContentTemplate::ENTITY_TYPE_ID),
+      ...$this->componentAudit->getConfigEntityDependenciesUsingAuditTarget($component, Pattern::ENTITY_TYPE_ID),
+    ];
+    foreach ($hosts as $host) {
+      $tree = $this->componentTreeLoader->load($host);
+      foreach ($tree as $item) {
+        if ($item->getComponentId() !== $component->id()) {
+          continue;
+        }
+        if ($after === NULL) {
+          $count++;
+          continue;
+        }
+        $coverage = $tree->getNearestReference($item->getUuid());
+        // Only the reference the placement holds counts: it never inherits.
+        if ($coverage === NULL || $coverage->holderUuid !== $item->getUuid()) {
+          continue;
+        }
+        if ($before !== NULL && $coverage->fits($before) && !$coverage->fits($after)) {
+          $count++;
+        }
+      }
+    }
+    return $count;
+  }
+
+  /**
+   * Gets the labels of bundles, `entity_type_id:bundle` as given.
+   *
+   * @param list<string> $targets
+   *
+   * @return list<string>
+   */
+  private function labelsOf(array $targets): array {
+    $options = $this->links->getTargetOptions();
+    return \array_values(\array_map(static fn (string $target): string => (string) ($options[$target] ?? $target), $targets));
+  }
+
+  /**
+   * Builds the confirmation text: one short line each, separated by newlines.
+   *
+   * @param list<string> $removed
+   *   The labels of the bundles that go.
+   */
+  private static function warning(int $links, int $placements, bool $removing, bool $typeChanges, array $removed): string {
     $lines = ['Nothing changes on the live site until you publish.'];
     if ($links > 0) {
       $lines[] = $links === 1
         ? '1 linked prop returns to its static value.'
         : \sprintf('%d linked props return to their static values.', $links);
+    }
+    if ($placements > 0) {
+      $noun = $placements === 1 ? 'placement' : 'placements';
+      if ($removing) {
+        $lines[] = \sprintf('%d %s will show the Pattern\'s static values.', $placements, $noun);
+      }
+      elseif ($typeChanges) {
+        $lines[] = \sprintf('%d %s will display nothing until someone picks content of the new type.', $placements, $noun);
+      }
+      else {
+        $lines[] = \sprintf('%d %s of %s will display nothing until someone picks other content.', $placements, $noun, \implode(', ', $removed));
+      }
     }
     return \implode("\n", $lines);
   }

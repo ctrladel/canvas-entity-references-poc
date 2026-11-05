@@ -12,6 +12,7 @@ use Drupal\canvas\Entity\Pattern;
 use Drupal\canvas_pattern_components\PatternLinks;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Extension\ThemeInstallerInterface;
+use Drupal\Core\Render\RendererInterface;
 use Drupal\Core\Url;
 use Drupal\node\Entity\Node;
 use Drupal\node\Entity\NodeType;
@@ -228,6 +229,18 @@ final class PatternBindingRouteTest extends ApiLayoutControllerTestBase {
   }
 
   /**
+   * Renders a page placement of the Pattern for the given article.
+   *
+   * @param array<int, array<string, mixed>> $siblings
+   *   Extra component tree items to add beside the placement.
+   */
+  private function renderPlacement(Node $article, array $siblings = []): string {
+    $page = $this->createPlacement($article, $siblings);
+    $build = $page->getComponentTree()->toRenderable($page, FALSE);
+    return (string) $this->container->get(RendererInterface::class)->renderInIsolation($build);
+  }
+
+  /**
    * Saves a page that places the Pattern with the given article picked.
    *
    * @param array<int, array<string, mixed>> $siblings
@@ -331,7 +344,7 @@ final class PatternBindingRouteTest extends ApiLayoutControllerTestBase {
 
   public function testBindWritesDraftOnly(): void {
     $this->createPattern(bound: FALSE);
-    $this->createArticle('Bound article');
+    $article = $this->createArticle('Bound article');
     $response = $this->postBinding(['node:article']);
     self::assertSame(Response::HTTP_OK, $response->getStatusCode());
     $state = self::decodeResponse($response);
@@ -342,6 +355,9 @@ final class PatternBindingRouteTest extends ApiLayoutControllerTestBase {
     self::assertNotNull($draft);
     self::assertSame(['entity_type_id' => 'node', 'bundles' => ['article'], 'links' => []], $draft->getThirdPartySettings('canvas_pattern_components'));
     self::assertSame([], self::storedSettings());
+    $html = $this->renderPlacement($article);
+    self::assertStringContainsString('Example heading', $html);
+    self::assertStringNotContainsString('Bound article', $html);
   }
 
   public function testBindRejectsUnknownTarget(): void {
@@ -372,7 +388,7 @@ final class PatternBindingRouteTest extends ApiLayoutControllerTestBase {
 
   public function testLinkAfterDraftBindThenPublish(): void {
     $this->createPattern(bound: FALSE);
-    $this->createArticle('Linked title');
+    $article = $this->createArticle('Linked title');
     self::assertSame(Response::HTTP_OK, $this->postBinding(['node:article'])->getStatusCode());
     self::assertSame(Response::HTTP_OK, $this->link()->getStatusCode());
     self::assertSame(Response::HTTP_OK, $this->makePublishAllRequest()->getStatusCode());
@@ -385,6 +401,7 @@ final class PatternBindingRouteTest extends ApiLayoutControllerTestBase {
     self::assertSame('Example heading', self::textInput($stored));
     self::assertCount(0, $stored->getTypedData()->validate());
     self::assertNull($this->getDraft());
+    self::assertStringContainsString('Linked title', $this->renderPlacement($article));
   }
 
   public function testBindKeepsExistingDraftEdits(): void {
@@ -413,6 +430,7 @@ final class PatternBindingRouteTest extends ApiLayoutControllerTestBase {
     $json = self::decodeResponse($response);
     self::assertSame('confirmation_required', $json['status']);
     self::assertSame(1, $json['links']);
+    self::assertSame(0, $json['placements']);
     self::assertStringContainsString('1 linked prop', $json['message']);
     self::assertStringContainsString('until you publish', $json['message']);
     // Short lines, the reassurance first.
@@ -469,6 +487,19 @@ final class PatternBindingRouteTest extends ApiLayoutControllerTestBase {
     self::assertSame([], $stored->getThirdPartySetting('canvas_pattern_components', 'links'));
   }
 
+  public function testChangeWarnsAboutPlacements(): void {
+    $this->createPattern(links: []);
+    $this->createPlacement($this->createArticle('Placed'));
+    $response = $this->postBinding(['node:news']);
+    self::assertSame(Response::HTTP_OK, $response->getStatusCode());
+    $json = self::decodeResponse($response);
+    self::assertSame('confirmation_required', $json['status']);
+    self::assertSame(0, $json['links']);
+    self::assertSame(1, $json['placements']);
+    self::assertStringContainsString('1 placement', $json['message']);
+    self::assertNull($this->getDraft());
+  }
+
   public function testSameTargetIsNoOp(): void {
     $this->createPattern();
     $response = $this->postBinding(['node:article']);
@@ -488,13 +519,42 @@ final class PatternBindingRouteTest extends ApiLayoutControllerTestBase {
 
   public function testRemoveThenPublishRemovesSettings(): void {
     $this->createPattern();
-    $this->createArticle('Not shown');
+    $article = $this->createArticle('Not shown');
     self::assertSame(Response::HTTP_OK, $this->postBinding([], TRUE)->getStatusCode());
     self::assertSame(Response::HTTP_OK, $this->makePublishAllRequest()->getStatusCode());
     self::assertSame([], self::storedSettings());
     $stored = Pattern::load(self::PATTERN_ID);
     self::assertInstanceOf(Pattern::class, $stored);
     self::assertCount(0, $stored->getTypedData()->validate());
+    $html = $this->renderPlacement($article);
+    self::assertStringContainsString('Example heading', $html);
+    self::assertStringNotContainsString('Not shown', $html);
+  }
+
+  public function testBundleChangeThenPublishEmptiesOldPick(): void {
+    $this->createPattern(links: []);
+    $article = $this->createArticle('Old pick');
+    $sibling = [
+      'uuid' => 'b3c8f0d2-1111-4a2b-9c3d-000000000002',
+      'component_id' => self::COMPONENT_ID,
+      'component_version' => self::activeVersion(),
+      'inputs' => ['text' => 'Sibling heading', 'element' => 'h2'],
+    ];
+    $page = $this->createPlacement($article, [$sibling]);
+    self::assertSame(Response::HTTP_OK, $this->postBinding(['node:news'], TRUE)->getStatusCode());
+    self::assertSame(Response::HTTP_OK, $this->makePublishAllRequest()->getStatusCode());
+    self::assertSame(['news'], self::storedSettings()['bundles']);
+
+    $page = Page::load($page->id());
+    self::assertInstanceOf(Page::class, $page);
+    $build = $page->getComponentTree()->toRenderable($page, FALSE);
+    $html = (string) $this->container->get(RendererInterface::class)->renderInIsolation($build);
+    self::assertStringNotContainsString('Old pick', $html);
+    self::assertStringNotContainsString('Oops', $html);
+    self::assertStringContainsString('Sibling heading', $html);
+    // The placement itself is not rewritten. A reference as it was stored is
+    // not checked again, so the page can still be saved; it renders nothing.
+    self::assertSame(0, $page->validate()->count());
   }
 
   public function testPatchAfterRebindSucceedsWithFreshHashes(): void {
@@ -599,6 +659,114 @@ final class PatternBindingRouteTest extends ApiLayoutControllerTestBase {
     $body = \json_decode($this->filterLayoutForPost((string) $get->getContent()), TRUE);
     $change($body['layout'][0]['components']);
     return $this->request(Request::create($url, 'POST', content: \json_encode($body, JSON_THROW_ON_ERROR)));
+  }
+
+  /**
+   * A reference that does not fit the binding is a 422 at the reference.
+   */
+  public function testPostWithAMismatchedReferenceIsUnprocessable(): void {
+    $this->createPattern(links: []);
+    $this->setUpCurrentUser([], [Page::EDIT_PERMISSION, 'access content']);
+    $page = $this->createPlacement($this->createArticle('Fits'));
+    $other = Node::create(['type' => 'news', 'title' => 'Does not fit', 'status' => 1]);
+    $other->save();
+    try {
+      $response = $this->postPageLayout($page, static function (array &$nodes) use ($other): void {
+        $nodes[0]['reference'] = \sprintf('node:news:%s', $other->uuid());
+      });
+    }
+    catch (ConstraintViolationException $e) {
+      // The test kernel rethrows what the exception subscriber answers with 422.
+      self::assertStringContainsString('layout.children.0.reference', (string) $e->getMessage());
+      return;
+    }
+    self::assertSame(Response::HTTP_UNPROCESSABLE_ENTITY, $response->getStatusCode(), (string) $response->getContent());
+    self::assertStringContainsString('layout.children.0.reference', (string) $response->getContent());
+  }
+
+  /**
+   * The component list route answers for a Pattern with its mapped bundles.
+   */
+  public function testComponentListCarriesTheMappedBundles(): void {
+    $this->createPattern();
+    $response = $this->request(Request::create('/canvas/api/v0/config/component'));
+    self::assertSame(Response::HTTP_OK, $response->getStatusCode(), (string) $response->getContent());
+    $list = \json_decode((string) $response->getContent(), TRUE);
+    self::assertSame(['node:article'], $list['pattern.' . self::PATTERN_ID]['patternMappedBundles']);
+    self::assertSame(['node:article'], $list['pattern.' . self::PATTERN_ID]['ownReferenceRequirement']);
+  }
+
+  /**
+   * A reference on a placement of an unbound Pattern is a 422, if it is new.
+   */
+  public function testNewReferenceOnAnUnboundPlacementIsUnprocessable(): void {
+    $this->createPattern(bound: FALSE);
+    $this->setUpCurrentUser([], [Page::EDIT_PERMISSION, 'access content']);
+    $article = $this->createArticle('Cannot be shown');
+    $page = $this->createPlacement($article);
+    // As stored before: kept, so the page can still be saved without changes.
+    $response = $this->postPageLayout($page, static function (array &$nodes): void {});
+    self::assertSame(Response::HTTP_OK, $response->getStatusCode(), (string) $response->getContent());
+    // A changed one is refused.
+    $other = $this->createArticle('Other');
+    try {
+      $response = $this->postPageLayout($page, static function (array &$nodes) use ($other): void {
+        $nodes[0]['reference'] = \sprintf('node:article:%s', $other->uuid());
+      });
+    }
+    catch (ConstraintViolationException $e) {
+      self::assertStringContainsString('layout.children.0.reference', (string) $e->getMessage());
+      return;
+    }
+    self::assertSame(Response::HTTP_UNPROCESSABLE_ENTITY, $response->getStatusCode(), (string) $response->getContent());
+    self::assertStringContainsString('layout.children.0.reference', (string) $response->getContent());
+  }
+
+  /**
+   * Editors without the permission to link can still pick for a placement.
+   */
+  public function testPickingForAPlacementNeedsNoPermissionToLink(): void {
+    $this->createPattern(links: []);
+    $this->setUpCurrentUser([], [Page::EDIT_PERMISSION, 'access content']);
+    self::assertFalse(\Drupal::currentUser()->hasPermission('link component props to content'));
+    $page = $this->createPlacement($this->createArticle('First'));
+    $second = $this->createArticle('Second');
+    $response = $this->postPageLayout($page, static function (array &$nodes) use ($second): void {
+      $nodes[0]['reference'] = \sprintf('node:article:%s', $second->uuid());
+    });
+    self::assertSame(Response::HTTP_OK, $response->getStatusCode(), (string) $response->getContent());
+    $draft = $this->container->get(AutoSaveManager::class)->getAutoSaveEntity($page)->entity;
+    self::assertInstanceOf(Page::class, $draft);
+    self::assertSame(\sprintf('node:article:%s', $second->uuid()), $draft->get('components')->first()->get('reference')->getValue());
+    // And remove it again.
+    $response = $this->postPageLayout($page, static function (array &$nodes): void {
+      unset($nodes[0]['reference']);
+    });
+    self::assertSame(Response::HTTP_OK, $response->getStatusCode(), (string) $response->getContent());
+  }
+
+  /**
+   * ... but a reference on a component that links props still needs it.
+   */
+  public function testReferenceOnAnotherComponentStillNeedsThePermission(): void {
+    $this->createPattern(links: []);
+    $this->setUpCurrentUser([], [Page::EDIT_PERMISSION, 'access content']);
+    $article = $this->createArticle('First');
+    $page = Page::create([
+      'title' => 'Host page',
+      'components' => [[
+        'uuid' => 'b3c8f0d2-1111-4a2b-9c3d-000000000002',
+        'component_id' => self::COMPONENT_ID,
+        'component_version' => self::activeVersion(),
+        'inputs' => ['text' => 'Plain', 'element' => 'h2'],
+      ],
+      ],
+    ]);
+    $page->save();
+    $this->expectException(AccessDeniedHttpException::class);
+    $this->postPageLayout($page, static function (array &$nodes) use ($article): void {
+      $nodes[0]['reference'] = \sprintf('node:article:%s', $article->uuid());
+    });
   }
 
 }
