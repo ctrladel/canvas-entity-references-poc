@@ -4525,6 +4525,12 @@ components:
           items:
             type: string
             pattern: '^[a-z0-9_]+:[a-z0-9_]+$'
+        patternMappedBundles:
+          type: array
+          description: Only on a Pattern, as `entity_type_id:bundle` of each bound bundle that has a link or a reference. Empty when the Pattern is unbound or nothing is mapped.
+          items:
+            type: string
+            pattern: '^[a-z0-9_]+:[a-z0-9_]+$'
         propSources:
           type: object
           description: the StaticPropSources to use for each SDC prop

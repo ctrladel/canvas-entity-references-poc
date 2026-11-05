@@ -141,6 +141,19 @@ export const usePublishPendingChanges = ({
         );
       }
 
+      // A placement of a Pattern takes its allowed content from the Pattern's
+      // published binding, which the component list carries.
+      if (
+        changesToPublish &&
+        Object.values(changesToPublish).some((c) => c.entity_type === 'pattern')
+      ) {
+        dispatch(
+          componentAndLayoutApi.util.invalidateTags([
+            { type: 'Components', id: 'LIST' },
+          ]),
+        );
+      }
+
       if (changedBrandKitIds.length) {
         dispatch(
           brandKitApi.util.invalidateTags([
