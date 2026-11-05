@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import clsx from 'clsx';
-import { CheckIcon, Link1Icon, LinkNone1Icon } from '@radix-ui/react-icons';
+import { Link1Icon, LinkNone1Icon } from '@radix-ui/react-icons';
 import { DropdownMenu, Separator } from '@radix-ui/themes';
 
 import { useAppDispatch } from '@/app/hooks';
@@ -9,6 +9,8 @@ import {
   isEvaluatedComponentModel,
 } from '@/features/layout/layoutModelSlice';
 import useInputUIData from '@/hooks/useInputUIData';
+
+import { LinkMenuItem, LinkMenuSub } from './LinkMenuItems';
 
 import type {
   BasePropSource,
@@ -90,22 +92,14 @@ const PropLinker = ({ propName, linked, suggestions }: PropLinkerProps) => {
     item: LinkSuggestion;
     isActive: boolean;
     childOf?: string;
-  }) => {
-    return (
-      <DropdownMenu.Item
-        onClick={() => handleFieldClick(item)}
-        disabled={isActive}
-        className={clsx({
-          [styles.disabled]: isActive,
-        })}
-        data-link-suggestion-option={item.label}
-        data-child-of={childOf}
-      >
-        {isActive && <CheckIcon />}
-        {item.label}
-      </DropdownMenu.Item>
-    );
-  };
+  }) => (
+    <LinkMenuItem
+      label={item.label}
+      active={isActive}
+      onSelect={() => handleFieldClick(item)}
+      childOf={childOf}
+    />
+  );
 
   const NestedDropdownItem = ({
     item,
@@ -118,40 +112,32 @@ const PropLinker = ({ propName, linked, suggestions }: PropLinkerProps) => {
 
     if (item.items && item.items.length > 0) {
       return (
-        <DropdownMenu.Sub>
-          <DropdownMenu.SubTrigger
-            className={clsx(styles.subTrigger, {
-              [styles.disabled]: isActive && item.source,
-            })}
-            data-link-suggestion-option={item.label}
-            data-child-of={parent}
-          >
-            {item.label}
-          </DropdownMenu.SubTrigger>
-
-          <DropdownMenu.SubContent>
-            {/* Show the parent item in its own menu if it has a source itself to link to. */}
-            {item.source && (
-              <>
-                <DropdownMenuItem
-                  key={item.id}
-                  item={item}
-                  isActive={isActive}
-                  childOf="myself"
-                />
-                <Separator orientation="horizontal" size="4" my="2" />
-              </>
-            )}
-
-            {item.items.map((sub, index) => (
-              <NestedDropdownItem
-                key={sub.id || index}
-                item={sub}
-                parent={item.label}
+        <LinkMenuSub
+          label={item.label}
+          active={isActive && Boolean(item.source)}
+          childOf={parent}
+        >
+          {/* Show the parent item in its own menu if it has a source itself to link to. */}
+          {item.source && (
+            <>
+              <DropdownMenuItem
+                key={item.id}
+                item={item}
+                isActive={isActive}
+                childOf="myself"
               />
-            ))}
-          </DropdownMenu.SubContent>
-        </DropdownMenu.Sub>
+              <Separator orientation="horizontal" size="4" my="2" />
+            </>
+          )}
+
+          {item.items.map((sub, index) => (
+            <NestedDropdownItem
+              key={sub.id || index}
+              item={sub}
+              parent={item.label}
+            />
+          ))}
+        </LinkMenuSub>
       );
     }
 
