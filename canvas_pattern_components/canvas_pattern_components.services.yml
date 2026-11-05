@@ -4,6 +4,18 @@ services:
       - '@entity_type.manager'
       - '@logger.factory'
       - '@Drupal\canvas\ComponentTreeReferenceTargets'
+  Drupal\canvas_pattern_components\EventSubscriber\PatternEditorRequestSubscriber:
+    arguments:
+      - '@Drupal\canvas_pattern_components\PatternLinks'
+      - '@Drupal\canvas\AutoSave\AutoSaveManager'
+    tags:
+      - { name: event_subscriber }
+  Drupal\canvas_pattern_components\Controller\PatternBindingController:
+    arguments:
+      - '@Drupal\canvas_pattern_components\PatternLinks'
+      - '@Drupal\canvas\AutoSave\AutoSaveManager'
+      - '@Drupal\canvas\ComponentTreeLinkGuard'
+      - '@current_user'
   # Canvas' services, reachable by validators and the PluginExists constraint,
   # which fetch them from the container by ID.
   canvas_pattern_components.entity_field_matcher:
