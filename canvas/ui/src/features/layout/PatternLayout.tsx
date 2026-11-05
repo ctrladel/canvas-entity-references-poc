@@ -4,10 +4,12 @@ import { useParams } from 'react-router';
 import { skipToken } from '@reduxjs/toolkit/query';
 
 import { useAppDispatch, useAppSelector } from '@/app/hooks';
+import { usePatternBundle } from '@/features/pattern/usePatternBundle';
 import { useGetPatternLayoutQuery } from '@/services/componentAndLayout';
 
 import {
   selectIsInitialized,
+  setHostTarget,
   setInitialized,
   setInitialLayoutModel,
 } from './layoutModelSlice';
@@ -17,6 +19,9 @@ const PatternLayout = () => {
   const { patternId } = useParams();
 
   const isInitialized = useAppSelector(selectIsInitialized);
+  // The editor is not shown until the bundle it writes on is held, so that the
+  // first write names it. Links read from the same bundle.
+  const { ready, hostTarget, error: bindingError } = usePatternBundle(patternId);
   const {
     data: fetchedLayout,
     error,
@@ -42,6 +47,13 @@ const PatternLayout = () => {
   }, [patternId, refetch, dispatch]);
 
   useEffect(() => {
+    // Without the binding the editor cannot name the bundle it writes on, and
+    // every save would be refused: show the error rather than an editor that
+    // looks fine and cannot save.
+    if (bindingError) {
+      showBoundary(bindingError);
+      return;
+    }
     if (isError && error && !isFetching) {
       showBoundary(error);
       return;
@@ -52,7 +64,7 @@ const PatternLayout = () => {
     // allow the page to render.
     resetBoundary();
 
-    if (layout && model && !isInitialized && !isFetching) {
+    if (layout && model && !isInitialized && !isFetching && ready) {
       dispatch(
         setInitialLayoutModel({
           layout,
@@ -69,13 +81,21 @@ const PatternLayout = () => {
     model,
     translations,
     isInitialized,
+    ready,
     error,
+    bindingError,
     showBoundary,
     dispatch,
     resetBoundary,
     isError,
     isFetching,
   ]);
+
+  useEffect(() => {
+    if (isInitialized) {
+      dispatch(setHostTarget(hostTarget));
+    }
+  }, [dispatch, hostTarget, isInitialized]);
 
   return null;
 };

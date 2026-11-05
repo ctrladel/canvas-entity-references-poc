@@ -11,6 +11,7 @@ import { extensionsSlice } from '@/features/extensions/extensionsSlice';
 import { formStateSlice } from '@/features/form/formStateSlice';
 import {
   layoutModelReducer,
+  setHostTarget,
   setInitialized,
   setInitialLayoutModel,
   setTranslations,
@@ -24,6 +25,7 @@ import {
   setInitialPageData,
 } from '@/features/pageData/pageDataSlice';
 import { previewSlice } from '@/features/pagePreview/previewSlice';
+import { patternBundleSlice } from '@/features/pattern/patternBundleSlice';
 import { personalizationSlice } from '@/features/personalization/personalizationSlice';
 import { codeComponentDialogSlice } from '@/features/ui/codeComponentDialogSlice';
 import { dialogSlice } from '@/features/ui/dialogSlice';
@@ -47,6 +49,7 @@ import { headlessFrontendsApi } from '@/services/headlessFrontends';
 import { notificationsApi } from '@/services/notificationsApi';
 import { pageDataFormApi } from '@/services/pageDataForm';
 import { pageVariantsApi } from '@/services/pageVariants';
+import { patternBindingApi } from '@/services/patternBinding';
 import { patternApi } from '@/services/patterns';
 import { pendingChangesApi } from '@/services/pendingChangesApi';
 import { personalizationApi } from '@/services/personalization';
@@ -121,11 +124,12 @@ const rootReducer = combineSlices(
           const { present } = previousHistory;
           // Nothing is recorded before the layout is loaded. An empty model
           // is not the sign of that: a layout of components without inputs,
-          // such as a placement of a component that takes no props, has one, and its changes still count
+          // such as a Pattern placement, has one, and its changes still count
           // in the undo stack of the `ui` slice.
           return (
             present.isInitialized !== false &&
             action.type !== setInitialLayoutModel.type &&
+            action.type !== setHostTarget.type &&
             action.type !== setTranslations.type &&
             action.type !== setUpdatePreview.type
           );
@@ -155,6 +159,7 @@ const rootReducer = combineSlices(
     pageDataOwner: pageDataOwnerReducer,
   },
   patternApi,
+  patternBindingApi,
   treeReferenceApi,
   pageVariantsApi,
   assetLibraryApi,
@@ -184,6 +189,7 @@ const rootReducer = combineSlices(
   previewSlice,
   queryErrorSlice,
   personalizationSlice,
+  patternBundleSlice,
 );
 // Infer the `RootState` type from the root reducer
 export type RootState = ReturnType<typeof rootReducer>;
@@ -217,6 +223,7 @@ const undoRedoActionIdMiddleware: Middleware<{}, RootState> =
     if (
       type === setUpdatePreview.type ||
       type === setInitialLayoutModel.type ||
+      type === setHostTarget.type ||
       type === setTranslations.type ||
       type === setInitialPageData.type ||
       type === resetPageData.type ||
@@ -257,6 +264,7 @@ export const makeStore = (preloadedState?: Partial<RootState>) => {
     middleware: (getDefaultMiddleware) => {
       return getDefaultMiddleware().concat(
         patternApi.middleware,
+        patternBindingApi.middleware,
         treeReferenceApi.middleware,
         pageVariantsApi.middleware,
         assetLibraryApi.middleware,

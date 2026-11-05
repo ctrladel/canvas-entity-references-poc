@@ -4,7 +4,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeStore } from '@/app/store';
 import {
   _linkPropToEntityValue,
+  addNewPatternToLayout,
   selectLayout,
+  selectModel,
   setInitialLayoutModel,
 } from '@/features/layout/layoutModelSlice';
 import {
@@ -187,12 +189,101 @@ describe('a user without the permission to link', () => {
     expect(toast.error).toHaveBeenCalledTimes(1);
   });
 
+  it('can add a Pattern from the library that only holds a reference a component uses itself', async () => {
+    const store = await makeLoaded();
+    await store.dispatch(
+      componentAndLayoutApi.util.upsertQueryData('getComponents', undefined, {
+        ...components,
+        'test.bound': { ownReferenceRequirement: ['node:article'] },
+      } as any),
+    );
+    const setSelected = vi.fn();
+    store.dispatch(
+      addNewPatternToLayout(
+        {
+          to: [0, 3],
+          layoutModel: {
+            layout: [{ ...comp('p', { reference: A }), type: 'test.bound@1' }],
+            model: {},
+          } as any,
+        },
+        setSelected,
+      ) as any,
+    );
+    expect(top(store)).toHaveLength(4);
+    expect(setSelected).toHaveBeenCalledTimes(1);
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it('cannot add a Pattern that holds links from the library', async () => {
+    const store = await makeLoaded();
+    const setSelected = vi.fn();
+    store.dispatch(
+      addNewPatternToLayout(
+        {
+          to: [0, 3],
+          layoutModel: {
+            layout: [comp('p')],
+            model: { p: entry(true) },
+          } as any,
+        },
+        setSelected,
+      ) as any,
+    );
+    expect(top(store)).toHaveLength(3);
+    expect(setSelected).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('a user who may link', () => {
   beforeEach(() => {
     permission.link = true;
     vi.mocked(toast).mockClear();
+  });
+
+  it('gets the links of a library Pattern put back where the place cannot serve them', async () => {
+    const store = await makeLoaded();
+    const setSelected = vi.fn();
+    // After "c", which has no reference.
+    store.dispatch(
+      addNewPatternToLayout(
+        {
+          to: [0, 3],
+          layoutModel: {
+            layout: [comp('p')],
+            model: { p: entry(true) },
+          } as any,
+        },
+        setSelected,
+      ) as any,
+    );
+    const inserted = top(store)[3].uuid;
+    expect(
+      (selectModel(store.getState() as any) as any)[inserted].source.heading
+        .sourceType,
+    ).toBe('static:field_item:string');
+  });
+
+  it('keeps the links of a library Pattern placed under a reference', async () => {
+    const store = await makeLoaded();
+    store.dispatch(
+      addNewPatternToLayout(
+        {
+          to: [0, 0, 0, 1],
+          layoutModel: {
+            layout: [comp('p')],
+            model: { p: entry(true) },
+          } as any,
+        },
+        vi.fn(),
+      ) as any,
+    );
+    const inserted = top(store)[0].slots[0].components[1].uuid;
+    expect(
+      (selectModel(store.getState() as any) as any)[inserted].source.heading
+        .expression,
+    ).toContain('entity:node:article');
   });
 
   describe('the Undo of the notice', () => {

@@ -3,6 +3,17 @@ import { debounce } from 'lodash';
 
 import { DEBOUNCE_TIMEOUT } from '@/components/form/react-hook-form/fields/componentFormData';
 
+// The debounced functions that are mounted.
+const mounted = new Set<ReturnType<typeof debounce>>();
+
+/**
+ * Sends the form edits that are still waiting for their delay, now. For what
+ * must not leave an edit behind, such as changing what the editor is about.
+ */
+export const flushPendingFormEdits = () => {
+  mounted.forEach((debouncedFn) => debouncedFn.flush());
+};
+
 /**
  * Returns a stable debounced version of formStateToStore and cancels any
  * pending call on unmount.
@@ -27,7 +38,9 @@ export const useDebouncedFormState = (
   ).current;
 
   useEffect(() => {
+    mounted.add(debouncedFn);
     return () => {
+      mounted.delete(debouncedFn);
       // Cancel any pending debounced calls on unmount.
       debouncedFn.cancel();
     };
