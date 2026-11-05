@@ -4753,8 +4753,8 @@ components:
           description: The UUID of the component instance
         type:
           type: string
-          # @todo Replace the hardcoded list of allowed component types (ComponentSource plugins) with `[a-z_]+` when contrib/custom component sources are supported.
-          pattern: "^(sdc|js|block)+\\.[^:]+$"
+          # Any ComponentSource plugin ID: contrib and custom component sources have their own.
+          pattern: "^[a-z_]+\\.[^:]+$"
         name:
           type: [string, "null"]
           # Either null, or specify a non-empty string.

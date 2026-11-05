@@ -1,3 +1,4 @@
+import { MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
@@ -231,5 +232,41 @@ describe('ComponentList', () => {
     expect(screen.getByText('SDC component')).toBeInTheDocument();
     expect(screen.getByText('Block component')).toBeInTheDocument();
     expect(screen.getByText('Extension component')).toBeInTheDocument();
+  });
+
+  it('does not offer a Pattern in its own editor', () => {
+    queryMocks.components.mockReturnValue({
+      data: {
+        ...components,
+        'pattern.own': {
+          ...baseComponent,
+          id: 'pattern.own',
+          name: 'Own pattern',
+          library: 'patterns',
+          source: 'Pattern',
+        },
+        'pattern.other': {
+          ...baseComponent,
+          id: 'pattern.other',
+          name: 'Other pattern',
+          library: 'patterns',
+          source: 'Pattern',
+        },
+      },
+      error: undefined,
+      isLoading: false,
+    });
+    render(
+      <MemoryRouter initialEntries={['/pattern/own']}>
+        <Routes>
+          <Route
+            path="/pattern/:patternId"
+            element={<ComponentList searchTerm="" visibility="all" />}
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(screen.getByText('Other pattern')).toBeInTheDocument();
+    expect(screen.queryByText('Own pattern')).toBeNull();
   });
 });
