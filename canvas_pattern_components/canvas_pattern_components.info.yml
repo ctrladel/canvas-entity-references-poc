@@ -1,0 +1,7 @@
+name: 'Canvas Pattern Components'
+type: module
+description: 'Exposes Drupal Canvas patterns as reusable components.'
+package: 'Canvas'
+core_version_requirement: ^11.3
+dependencies:
+  - canvas:canvas

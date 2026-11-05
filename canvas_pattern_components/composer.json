@@ -1,0 +1,9 @@
+{
+  "name": "drupal/canvas_pattern_components",
+  "description": "Exposes Drupal Canvas patterns as reusable components.",
+  "type": "drupal-module",
+  "license": "GPL-2.0-or-later",
+  "require": {
+    "drupal/canvas": "^1.2"
+  }
+}

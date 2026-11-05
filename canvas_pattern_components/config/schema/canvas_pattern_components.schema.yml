@@ -1,0 +1,23 @@
+# Schema for the `pattern` component source plugin.
+# @see \Drupal\canvas_pattern_components\Plugin\Canvas\ComponentSource\PatternComponent
+
+# The source-local ID of a `pattern` component: the Pattern config entity ID.
+# @see canvas.schema.yml `type: canvas.component_source_local_id.*`
+canvas.component_source_local_id.pattern:
+  type: canvas.component_source_local_id.*
+  label: 'Pattern ID'
+  constraints:
+    FullyValidatable: ~
+    # The referenced Pattern config entity must exist.
+    ConfigExists:
+      prefix: 'canvas.pattern.'
+
+# The `pattern` source stores no per-component settings: the content is fully
+# determined by the referenced Pattern config entity and rendered live.
+# @see canvas.schema.yml `type: canvas.component_source_settings.*`
+canvas.component_source_settings.pattern:
+  type: canvas.component_source_settings.*
+  label: 'Pattern component settings'
+  constraints:
+    FullyValidatable: ~
+  mapping: {}

@@ -1,0 +1,23 @@
+parameters:
+  level: 8
+  fileExtensions:
+    - php
+    - module
+    - inc
+    - install
+    - theme
+    - profile
+  reportUnmatchedIgnoredErrors: false
+  ignoreErrors:
+    # new static() is a best practice in Drupal.
+    - "#^Unsafe usage of new static#"
+    # Drupal's array-heavy APIs rarely specify iterable value types; Core and
+    # Canvas both exempt these at higher levels.
+    - identifier: missingType.iterableValue
+    - identifier: missingType.generics
+    # This module deliberately builds on Canvas's not-yet-public ComponentSource
+    # plugin API by extending ComponentSourceBase.
+    # @see https://www.drupal.org/i/3520484
+    -
+      message: "#extends @internal class#"
+      path: src/Plugin/Canvas/ComponentSource/PatternComponent.php
