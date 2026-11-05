@@ -15,7 +15,10 @@ import {
 import { useAppDispatch, useAppSelector } from '@/app/hooks';
 import ErrorBoundary from '@/components/error/ErrorBoundary';
 import PageDataForm from '@/components/PageDataForm';
+import ComponentReference from '@/components/panel/ComponentReference';
 import { setCurrentComponent } from '@/features/form/formStateSlice';
+import { selectLayout } from '@/features/layout/layoutModelSlice';
+import { findComponentByUuid } from '@/features/layout/layoutUtils';
 import {
   EditorFrameContext,
   selectEditorFrameContext,
@@ -24,7 +27,10 @@ import {
   selectSelection,
 } from '@/features/ui/uiSlice';
 import useHidePanelClasses from '@/hooks/useHidePanelClasses';
-import { PAGE_VARIANT_ENTITY_TYPE } from '@/services/pageVariants';
+import {
+  isMarkerComponentType,
+  PAGE_VARIANT_ENTITY_TYPE,
+} from '@/services/pageVariants';
 
 import type React from 'react';
 
@@ -36,6 +42,7 @@ const ContextualPanel: React.FC = () => {
   const selection = useAppSelector(selectSelection);
   const dispatch = useAppDispatch();
   const editorFrameContext = useAppSelector(selectEditorFrameContext);
+  const layout = useAppSelector(selectLayout);
   const { entityId, entityType } = useParams();
   const isTemplateContext = editorFrameContext === EditorFrameContext.TEMPLATE;
   // Page variants are config entities without entity form fields, so like
@@ -43,6 +50,14 @@ const ContextualPanel: React.FC = () => {
   // settings.
   const hasPageDataTab =
     !isTemplateContext && entityType !== PAGE_VARIANT_ENTITY_TYPE;
+  // A single, real component can be linked to content. A marker is not a
+  // component with props.
+  const selectedNode =
+    selectedComponent && !isMultiSelect
+      ? findComponentByUuid(layout, selectedComponent)
+      : null;
+  const canLinkSelection =
+    selectedNode !== null && !isMarkerComponentType(selectedNode.type);
   const mainTabText = isTemplateContext ? 'Template data' : 'Page data';
 
   const [activePanel, setActivePanel] = useState('pageData');
@@ -112,6 +127,12 @@ const ContextualPanel: React.FC = () => {
                 >
                   Settings
                 </Tabs.Trigger>
+              )}
+              {canLinkSelection && selectedComponent && (
+                <ComponentReference
+                  key={selectedComponent}
+                  uuid={selectedComponent}
+                />
               )}
             </Tabs.List>
             <ScrollArea scrollbars="vertical" className={styles.scrollArea}>
