@@ -1,6 +1,6 @@
 # Entity references for SDCs in Canvas: requirements, opinions and options
 
-> AI-Generated: Yes. This document was written entirely by Claude Code, as was most of the code it describes. I directed the design and reviewed the result.
+> AI-Generated: Yes. This document was written entirely by Claude Code, as was most of the code it describes. I directed the design and reviewed the overall result, not this document in detail.
 
 This summarizes the discussion on [#3585135](https://git.drupalcode.org/project/canvas/-/work_items/3585135) and [#3573831](https://git.drupalcode.org/project/canvas/-/work_items/3573831), compares the possible approaches, and shares results from a spike. Corrections are welcome if I've misrepresented anyone's position.
 
@@ -15,7 +15,7 @@ I built a proof of concept in four stacked pieces ([README](../README.md), [find
 3. **Live placements.** An editor places a bound Pattern and picks an entity.
 4. **Pattern overrides.** A site builder exposes props, and a placement can override them.
 
-SDC files don't change. For the scope of the issue, the fix is pieces 1 to 3 together. Referencing an entity from any component on a page, and overrides, go beyond it and can be dropped. The main open product questions are whether this split between bound Patterns and tree references is the right one, and whether copies, live placements and bound placements should become separate concepts.
+SDC files don't change. For the scope of the issue, the fix is pieces 1 to 3 together. Referencing an entity from any component on a page, and overrides, go beyond it and can be dropped.
 
 ## Current state
 
@@ -36,7 +36,7 @@ What the thread is asking for:
 7. Dependencies on bundles and fields must be expressible (@wim leers).
 8. It shouldn't require users to enter "the weird and wonderful world of Drupal" (@pameeela, comment 14).
 
-My own assumption, which I'd like tested: editors using references want a structured, predictable result that's similar across the site, stays up to date, or both. If that's right, per-placement overrides are the exception. That's narrower than the "creative control" and one-off static inputs in the code component goals, so it's a real question for product.
+My own assumption is that editors using references want a structured, predictable result that's similar across the site, stays up to date, or both. If that's right, per-placement overrides are the exception. That's narrower than the "creative control" and one-off static inputs in the code component goals, so it may not hold.
 
 ## Voices
 
@@ -155,16 +155,3 @@ Canvas 1.x and Drupal 11.4: kernel and client tests per piece, plus browser and 
 - **A hard-coded `type: 'template'`** in `layoutModelSlice.ts` is what prevents linking from working outside Content Templates in a module alone.
 - **Deleting a type a reference points at** broke the editor in an earlier version. A reference to a gone type or bundle now still covers its subtree and gives no value.
 - **Not tested:** translation, workspaces, usage tracking, multi-root Patterns, authenticated page caching, real view modes and Views.
-
-## Questions
-
-For @lauriii, @pameeela and product:
-1. @lauriii: you said you're aiming to support both view mode style and manual mapping. Does this split, with bound Patterns for one and tree references for the other, match what you had in mind?
-2. @pameeela: does this fit how site builders and editors would expect to show content in components?
-3. Are sealed placements enough, with overrides only where a Pattern exposes them? Or are one-off inputs a hard requirement?
-4. What should render when a linked value is empty or the viewer can't access it? The spike renders the component's example value under a reference.
-
-For maintainers:
-5. Should copies, live placements and bound placements become separate concepts, or at least be clearly separated in the UI? If a separate entity, is one entity per bundle acceptable?
-6. Would you accept a small interface such as `TargetEntityDataDefinitionProviderInterface` in place of the `instanceof ContentTemplate` checks, so the linker works outside Content Templates?
-7. @pdureau, @wim leers: does keeping the mapping outside SDCs, with SDC files untouched, meet your constraint?

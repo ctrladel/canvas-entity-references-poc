@@ -1,6 +1,6 @@
 # Entity references for SDCs in Canvas: findings
 
-> AI-Generated: Yes. This document was written entirely by Claude Code, as was most of the code it describes. I directed the design and reviewed the result.
+> AI-Generated: Yes. This document was written entirely by Claude Code, as was most of the code it describes. I directed the design and reviewed the overall result, not this document in detail.
 
 What I found building the proof of concept, by piece. The code is in four stacked PRs ([README](../README.md)). The alternatives and the discussion are in [sdc-entity-references-options.md](sdc-entity-references-options.md).
 
@@ -138,14 +138,3 @@ The list is in the [README](../README.md#known-limits). Things not tested at all
 - Real view modes and Views as a host of the Pattern.
 - MySQL and assertions off on the carved stack.
 - Canvas upgrade: the branches have no update path.
-
-## Questions for product and maintainers
-
-1. @lauriii: you said you're aiming to support both view mode style and manual mapping. Does this split, with bound Patterns for one and tree references for the other, match what you had in mind?
-2. Should copies, live placements and bound placements become separate concepts, or at least be clearly separated in the UI? If a separate entity, is one entity per bundle acceptable?
-3. @pameeela: does this fit how site builders and editors would expect to show content in components?
-4. Are sealed placements with opt-in overrides enough, or are one-off inputs a hard requirement?
-5. What should render when a linked value is empty or inaccessible? The spike renders the component's example value under a reference. Is that predictable enough?
-6. Would you accept `TargetEntityDataDefinitionProviderInterface` and the own-reference seam as generic?
-7. Would you accept a hook around the auto-save manager in place of replacing the class?
-8. @pdureau, @wim leers: does keeping the mapping outside SDCs, with SDC files untouched, meet your constraint?
