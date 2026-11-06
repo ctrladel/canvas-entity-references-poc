@@ -274,7 +274,12 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
     return $static_prop_source;
   }
 
-  private function getDefaultRelativeUrlPropSource(string $component_id, string $prop_name): DefaultRelativeUrlPropSource {
+  /**
+   * Gets the source that shows the example of a prop that needs an entity.
+   *
+   * @internal
+   */
+  public function getDefaultRelativeUrlPropSource(string $component_id, string $prop_name): DefaultRelativeUrlPropSource {
     if (\array_key_exists($prop_name, $this->defaultRelativeUrlPropSources)) {
       return $this->defaultRelativeUrlPropSources[$prop_name];
     }
@@ -854,6 +859,19 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
   /**
    * {@inheritdoc}
    */
+  public function getInputSchemaRefs(): array {
+    $refs = [];
+    foreach (ComponentMetadataHelper::getNonAttributeComponentProperties($this->getMetadata()) as $prop_name => $schema) {
+      if (isset($schema['$ref'])) {
+        $refs[(string) $prop_name] = $schema['$ref'];
+      }
+    }
+    return $refs;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
   public function requiresExplicitInput(): bool {
     return !empty($this->configuration['prop_field_definitions']);
   }
@@ -1091,7 +1109,6 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
     ?EntityInterface $entity = NULL,
     array $settings = [],
   ): array {
-    $transforms = [];
     $component_schema = $this->getMetadata()->schema ?? [];
 
     // @todo Uncomment this once it is guaranteed that the POST request to add
@@ -1151,76 +1168,14 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
       $suggestions = PropSourceSuggester::structureSuggestionsForHierarchicalResponse($raw);
     }
 
+    $form['#attached']['canvas-transforms'] = [];
     foreach ($prop_field_definitions as $sdc_prop_name => $static_prop_source_field_definition) {
-      // Uncollapse if set; otherwise fall back to the default static prop
-      // source, but *made empty* instead of the default value.
-      // Note that ::clientModelToInput() guarantees $inputValues contains a
-      // value for every required prop, even when a required property is allowed
-      // to be empty during editing for improved usability.
-      // @see ::getDefaultExplicitInput()
-      // @see ::clientModelToInput()
-      // @see https://www.drupal.org/i/3529788
+      // ::clientModelToInput() guarantees $inputValues contains a value for
+      // every required prop, even when a required property is allowed to be
+      // empty during editing for improved usability.
       \assert(\array_key_exists($sdc_prop_name, $inputValues) || !\in_array($sdc_prop_name, $this->getExplicitInputDefinitions()['required'], TRUE));
-      $source = $this->uncollapse($inputValues[$sdc_prop_name] ?? NULL, $sdc_prop_name);
-      // Any component instance with props populated with a StaticPropSource
-      // MUST use the StaticPropSource shape stored in the Component version. If
-      // it does not, it is corrupt. Rather than building a potentially broken
-      // form, abort and inform the user.
-      $default_static_source = $this->getDefaultStaticPropSource($sdc_prop_name, FALSE);
-      if ($source instanceof StaticPropSource && !$source->hasSameShapeAs($default_static_source)) {
-        // This should never occur: ignore this use of a HTTP-level exception.
-        // @phpstan-ignore-next-line phpat.jsonSchemaPropsComponentSourceBase
-        throw new NotAcceptableHttpException(\sprintf(
-          "Corrupted component instance detected: an instance of the %s Component (version %s) is being populated using a deviating storage shape for the %s prop. Manually recreate this component in the UI to resolve this.",
-          $component->id(),
-          $component->getActiveVersion(),
-          $sdc_prop_name,
-        ));
-      }
-      $disabled = FALSE;
-      $linkable_prop_source = $source instanceof LinkablePropSourceInterface ? $source : NULL;
-      if (!$source instanceof StaticPropSource) {
-        // @todo Build EntityFieldPropSource UX in https://www.drupal.org/i/3541037. Related: https://www.drupal.org/project/canvas/issues/3459234
-        // @todo Design is undefined for the AdaptedPropSource UX.
-        // Fall back to the static version, disabled for now where the design is
-        // undefined.
-        $disabled = !$source instanceof DefaultRelativeUrlPropSource;
-        $source = $default_static_source;
-      }
-
-      $field_widget_plugin_id = $static_prop_source_field_definition['field_widget'];
-      $label = $component_schema['properties'][$sdc_prop_name]['title'] ?? Unicode::ucfirst($sdc_prop_name);
-      $description = $component_schema['properties'][$sdc_prop_name]['description'] ?? NULL;
-      // Read x-canvas-color-picker directly from the raw component schema,
-      // since PropShape::standardize() strips it before it's stored.
-      $field_widget_settings = [];
-      if ($field_widget_plugin_id === 'canvas_color_picker') {
-        $mode = $component_schema['properties'][$sdc_prop_name]['x-canvas-color-picker'] ?? NULL;
-        if ($mode !== NULL) {
-          $field_widget_settings = ['mode' => $mode];
-        }
-        $folders = $component_schema['properties'][$sdc_prop_name]['x-canvas-color-folders'] ?? NULL;
-        if (!empty($folders) && \is_array($folders)) {
-          $field_widget_settings['folders'] = $folders;
-        }
-      }
-      $widget = $source->getWidget($component->id(), $component->getLoadedVersion(), $sdc_prop_name, $label, $field_widget_plugin_id, $description, $field_widget_settings);
-      $is_required = $static_prop_source_field_definition['required'];
-      // For array props: JSON Schema `required: [prop]` means "the key must be
-      // present" — it does NOT enforce ≥1 items. Only `minItems: 1` does that.
-      // Drupal's setRequired(TRUE) enforces ≥1 value (displaying the required
-      // asterisk and preventing the user from removing the last item in the
-      // UI). Passing $is_required=TRUE for a required array without minItems: 1
-      // would over-enforce: the user couldn't remove all items even though the
-      // JSON Schema allows an empty array. So only mark array props as
-      // Drupal-required when minItems: 1 is explicitly set.
-      // @see https://www.drupal.org/project/canvas/issues/3516754
-      $prop_schema = $component_schema['properties'][$sdc_prop_name] ?? [];
-      if ($is_required && ($prop_schema['type'] ?? NULL) === 'array' && ($prop_schema['minItems'] ?? 0) < 1) {
-        $is_required = FALSE;
-      }
-      $form[$sdc_prop_name] = $source->formTemporaryRemoveThisExclamationExclamationExclamation($widget, $sdc_prop_name, $is_required, $entity_object_for_field_widget, $form, $form_state);
-      $form[$sdc_prop_name]['#disabled'] = $disabled;
+      ['element' => $element, 'linkable' => $linkable_prop_source, 'label' => $label, 'required' => $is_required] = $this->buildPropElementWithSource($form, $form_state, $component, $sdc_prop_name, $sdc_prop_name, $inputValues[$sdc_prop_name] ?? NULL, $entity_object_for_field_widget);
+      $form[$sdc_prop_name] = $element;
 
       if ($link_target !== NULL) {
         $could_use_dynamic_prop_source = $may_link && !empty($suggestions[$sdc_prop_name]);
@@ -1254,32 +1209,149 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
           ];
         }
       }
-
-      $widget_definition = $this->fieldWidgetPluginManager->getDefinition($widget->getPluginId());
-      if (\array_key_exists('canvas', $widget_definition) && \array_key_exists('transforms', $widget_definition['canvas'])) {
-        $transforms[$sdc_prop_name] = \array_map(
-          static fn (array $transform): array =>
-          [
-            ...$transform,
-            'multiple' => $default_static_source->getCardinality() !== 1,
-          ],
-          $widget_definition['canvas']['transforms']);
-      }
-      else {
-        throw new \LogicException(\sprintf(
-          "Drupal Canvas determined the `%s` field widget plugin must be used to populate the `%s` prop on the `%s` component. However, no `canvas.transforms` metadata is defined on the field widget plugin definition. This makes it impossible for this widget to work. Please define the missing metadata. See %s for guidance.",
-          $field_widget_plugin_id,
-          $this->getSourceSpecificComponentId(),
-          $sdc_prop_name,
-          'https://git.drupalcode.org/project/canvas/-/raw/0.x/canvas.api.php?ref_type=heads',
-        ));
-      }
     }
-    $form['#attached']['canvas-transforms'] = $transforms;
     if ($link_target !== NULL) {
       $form['#after_build'][] = [static::class, 'moveSuggestionsToLabel'];
     }
     return $form;
+  }
+
+  /**
+   * Builds the form element that edits one prop with a static prop source.
+   *
+   * The element can be given another name than the prop's, so a form can hold
+   * the props of several instances, or of one instance under names of its own.
+   * What the widget loads about the prop (its allowed values, for example) is
+   * still found by the prop's own name.
+   *
+   * @param array $form
+   *   The form being built. Its `#parents` hold the widget state, and the
+   *   transforms of the element's widget are attached to it by element name.
+   * @param \Drupal\Core\Form\FormStateInterface $form_state
+   *   The form state.
+   * @param \Drupal\canvas\Entity\Component $component
+   *   The component of this source.
+   * @param string $prop_name
+   *   The prop to edit.
+   * @param string $element_name
+   *   The name of the element, which is also the name of its field.
+   * @param mixed $input
+   *   What is stored for the prop: a collapsed value, or a static prop source
+   *   in its array form. NULL for none.
+   * @param \Drupal\Core\Entity\EntityInterface|null $entity
+   *   The entity that hosts the component tree.
+   *
+   * @return array
+   *   The form element.
+   */
+  public function buildPropElement(array &$form, FormStateInterface $form_state, Component $component, string $prop_name, string $element_name, mixed $input, ?EntityInterface $entity): array {
+    $entity_object_for_field_widget = match (TRUE) {
+      $entity instanceof FieldableEntityInterface => $entity,
+      $entity instanceof EmptyTargetEntityProviderInterface => $entity->createEmptyTargetEntity(),
+      $entity instanceof Pattern => Pattern::createEmptyHostEntity(),
+      default => throw new \LogicException(),
+    };
+    return $this->buildPropElementWithSource($form, $form_state, $component, $prop_name, $element_name, $input, $entity_object_for_field_widget)['element'];
+  }
+
+  /**
+   * @return array{element: array, linkable: ?\Drupal\canvas\PropSource\LinkablePropSourceInterface, label: string, required: bool}
+   *   The element, the stored source of the prop when it can be linked, its
+   *   label and whether it is required.
+   */
+  private function buildPropElementWithSource(array &$form, FormStateInterface $form_state, Component $component, string $sdc_prop_name, string $element_name, mixed $input, EntityInterface $entity_object_for_field_widget): array {
+    $component_schema = $this->getMetadata()->schema ?? [];
+    \assert(isset($this->configuration['prop_field_definitions']));
+    $static_prop_source_field_definition = $this->configuration['prop_field_definitions'][$sdc_prop_name];
+    // Uncollapse if set; otherwise fall back to the default static prop
+    // source, but *made empty* instead of the default value.
+    // Note that ::clientModelToInput() guarantees the input contains a
+    // value for every required prop, even when a required property is allowed
+    // to be empty during editing for improved usability.
+    // @see ::getDefaultExplicitInput()
+    // @see ::clientModelToInput()
+    // @see https://www.drupal.org/i/3529788
+    $source = $this->uncollapse($input, $sdc_prop_name);
+    // Any component instance with props populated with a StaticPropSource
+    // MUST use the StaticPropSource shape stored in the Component version. If
+    // it does not, it is corrupt. Rather than building a potentially broken
+    // form, abort and inform the user.
+    $default_static_source = $this->getDefaultStaticPropSource($sdc_prop_name, FALSE);
+    if ($source instanceof StaticPropSource && !$source->hasSameShapeAs($default_static_source)) {
+      // This should never occur: ignore this use of a HTTP-level exception.
+      // @phpstan-ignore-next-line phpat.jsonSchemaPropsComponentSourceBase
+      throw new NotAcceptableHttpException(\sprintf(
+        "Corrupted component instance detected: an instance of the %s Component (version %s) is being populated using a deviating storage shape for the %s prop. Manually recreate this component in the UI to resolve this.",
+        $component->id(),
+        $component->getActiveVersion(),
+        $sdc_prop_name,
+      ));
+    }
+    $disabled = FALSE;
+    $linkable_prop_source = $source instanceof LinkablePropSourceInterface ? $source : NULL;
+    if (!$source instanceof StaticPropSource) {
+      // @todo Build EntityFieldPropSource UX in https://www.drupal.org/i/3541037. Related: https://www.drupal.org/project/canvas/issues/3459234
+      // @todo Design is undefined for the AdaptedPropSource UX.
+      // Fall back to the static version, disabled for now where the design is
+      // undefined.
+      $disabled = !$source instanceof DefaultRelativeUrlPropSource;
+      $source = $default_static_source;
+    }
+
+    $field_widget_plugin_id = $static_prop_source_field_definition['field_widget'];
+    $label = $component_schema['properties'][$sdc_prop_name]['title'] ?? Unicode::ucfirst($sdc_prop_name);
+    $description = $component_schema['properties'][$sdc_prop_name]['description'] ?? NULL;
+    // Read x-canvas-color-picker directly from the raw component schema,
+    // since PropShape::standardize() strips it before it's stored.
+    $field_widget_settings = [];
+    if ($field_widget_plugin_id === 'canvas_color_picker') {
+      $mode = $component_schema['properties'][$sdc_prop_name]['x-canvas-color-picker'] ?? NULL;
+      if ($mode !== NULL) {
+        $field_widget_settings = ['mode' => $mode];
+      }
+      $folders = $component_schema['properties'][$sdc_prop_name]['x-canvas-color-folders'] ?? NULL;
+      if (!empty($folders) && \is_array($folders)) {
+        $field_widget_settings['folders'] = $folders;
+      }
+    }
+    $widget = $source->getWidget($component->id(), $component->getLoadedVersion(), $sdc_prop_name, $label, $field_widget_plugin_id, $description, $field_widget_settings, $element_name);
+    $is_required = $static_prop_source_field_definition['required'];
+    // For array props: JSON Schema `required: [prop]` means "the key must be
+    // present" — it does NOT enforce ≥1 items. Only `minItems: 1` does that.
+    // Drupal's setRequired(TRUE) enforces ≥1 value (displaying the required
+    // asterisk and preventing the user from removing the last item in the
+    // UI). Passing $is_required=TRUE for a required array without minItems: 1
+    // would over-enforce: the user couldn't remove all items even though the
+    // JSON Schema allows an empty array. So only mark array props as
+    // Drupal-required when minItems: 1 is explicitly set.
+    // @see https://www.drupal.org/project/canvas/issues/3516754
+    $prop_schema = $component_schema['properties'][$sdc_prop_name] ?? [];
+    if ($is_required && ($prop_schema['type'] ?? NULL) === 'array' && ($prop_schema['minItems'] ?? 0) < 1) {
+      $is_required = FALSE;
+    }
+    $element = $source->formTemporaryRemoveThisExclamationExclamationExclamation($widget, $element_name, $is_required, $entity_object_for_field_widget, $form, $form_state);
+    $element['#disabled'] = $disabled;
+
+    $widget_definition = $this->fieldWidgetPluginManager->getDefinition($widget->getPluginId());
+    if (\array_key_exists('canvas', $widget_definition) && \array_key_exists('transforms', $widget_definition['canvas'])) {
+      $form['#attached']['canvas-transforms'][$element_name] = \array_map(
+        static fn (array $transform): array =>
+        [
+          ...$transform,
+          'multiple' => $default_static_source->getCardinality() !== 1,
+        ],
+        $widget_definition['canvas']['transforms']);
+    }
+    else {
+      throw new \LogicException(\sprintf(
+        "Drupal Canvas determined the `%s` field widget plugin must be used to populate the `%s` prop on the `%s` component. However, no `canvas.transforms` metadata is defined on the field widget plugin definition. This makes it impossible for this widget to work. Please define the missing metadata. See %s for guidance.",
+        $field_widget_plugin_id,
+        $this->getSourceSpecificComponentId(),
+        $sdc_prop_name,
+        'https://git.drupalcode.org/project/canvas/-/raw/0.x/canvas.api.php?ref_type=heads',
+      ));
+    }
+    return ['element' => $element, 'linkable' => $linkable_prop_source, 'label' => $label, 'required' => $is_required];
   }
 
   public static function moveSuggestionsToLabel(array $element, FormStateInterface $form_state): array {
@@ -1296,16 +1368,24 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
    * @param array $propLinkData
    *   Prop link data from a parent element to pass down.
    */
-  public static function processElementTreeLinkerLabels(array &$element, array $propLinkData = []): void {
+  public static function processElementTreeLinkerLabels(array &$element, array $propLinkData = [], array|string $propLabelData = []): void {
     // If this element has prop_link_data, use it for this subtree
     if (!empty($element['#prop_link_data'])) {
       $propLinkData = $element['#prop_link_data'];
+    }
+    // Anything else that wants a control in the label of a prop, such as a
+    // module that alters the form, hands its data over the same way.
+    if (!empty($element['#prop_label_data'])) {
+      $propLabelData = $element['#prop_label_data'];
     }
 
     // If we have prop link data and this element has a title display, add the
     // data to label attributes.
     if (!empty($propLinkData) && isset($element['#title_display'])) {
       $element['#label_attributes']['prop_link_data'] = $propLinkData;
+    }
+    if (!empty($propLabelData) && isset($element['#title_display'])) {
+      $element['#label_attributes']['prop_label_data'] = $propLabelData;
     }
 
     // Make the prop link data available to wrappers that render their own
@@ -1314,9 +1394,15 @@ abstract class JsonSchemaPropsComponentSourceBase extends ComponentSourceBase im
     if (!empty($propLinkData) && (\in_array('fieldset', $wrappers, TRUE) || \in_array('datetime_wrapper', $wrappers, TRUE))) {
       $element['#prop_link_data'] = $propLinkData;
     }
+    if (!empty($propLabelData) && (\in_array('fieldset', $wrappers, TRUE) || \in_array('datetime_wrapper', $wrappers, TRUE))) {
+      $element['#prop_label_data'] = $propLabelData;
+    }
 
+    // The options of radios and checkboxes carry the label of the prop only in
+    // the group's own label, not once for each option.
+    $child_label_data = \in_array($element['#type'] ?? NULL, ['radios', 'checkboxes'], TRUE) ? [] : $propLabelData;
     foreach (Element::children($element) as $key) {
-      static::processElementTreeLinkerLabels($element[$key], $propLinkData);
+      static::processElementTreeLinkerLabels($element[$key], $propLinkData, $child_label_data);
     }
   }
 

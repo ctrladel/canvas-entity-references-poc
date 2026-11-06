@@ -146,6 +146,28 @@ interface ComponentSourceInterface extends PluginInspectionInterface, Derivative
   public function requiresExplicitInput(): bool;
 
   /**
+   * Whether the client model has an entry for this instance.
+   *
+   * Without an entry the client sends no input for the instance back, and what
+   * is stored for it is replaced by nothing. A source that stores input without
+   * requiring it must say so here, or the input is lost when the layout is saved.
+   *
+   * @see \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList::buildLayoutAndModel()
+   */
+  public function exposesInputToClient(ComponentTreeItem $item): bool;
+
+  /**
+   * Lists the stored inputs of an instance that carry a JSON schema `$ref`.
+   *
+   * What the stored value of such an input means (a Brand Kit color, for
+   * example) is known by the `$ref`, and what depends on it is found by it.
+   *
+   * @return array<string, string>
+   *   `$ref` URIs, keyed by the name of the input they are for.
+   */
+  public function getInputSchemaRefs(): array;
+
+  /**
    * Returns the default explicit input (prop sources) for this component.
    *
    * @param bool $only_required

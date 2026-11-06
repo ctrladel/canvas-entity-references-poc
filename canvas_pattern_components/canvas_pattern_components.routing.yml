@@ -20,3 +20,42 @@ canvas_pattern_components.binding.set:
     <<: *binding_requirements
     _csrf_request_header_token: 'TRUE'
   methods: [POST]
+
+canvas_pattern_components.exposure.get: &exposure
+  path: '/canvas/api/v0/pattern-exposure/{entity}'
+  defaults:
+    _controller: 'Drupal\canvas_pattern_components\Controller\PatternExposureController::get'
+  requirements: &exposure_requirements
+    _canvas_authentication_required: 'TRUE'
+    _canvas_component_tree_edit_access: 'TRUE'
+    _entity_access: 'entity.update'
+    _format: 'json'
+  options:
+    parameters:
+      entity:
+        type: entity:pattern
+  methods: [GET]
+canvas_pattern_components.exposure.expose:
+  <<: *exposure
+  defaults:
+    _controller: 'Drupal\canvas_pattern_components\Controller\PatternExposureController::expose'
+  requirements:
+    <<: *exposure_requirements
+    _csrf_request_header_token: 'TRUE'
+  methods: [POST]
+canvas_pattern_components.exposure.change:
+  <<: *exposure
+  defaults:
+    _controller: 'Drupal\canvas_pattern_components\Controller\PatternExposureController::change'
+  requirements:
+    <<: *exposure_requirements
+    _csrf_request_header_token: 'TRUE'
+  methods: [PATCH]
+canvas_pattern_components.exposure.stop:
+  <<: *exposure
+  defaults:
+    _controller: 'Drupal\canvas_pattern_components\Controller\PatternExposureController::stop'
+  requirements:
+    <<: *exposure_requirements
+    _csrf_request_header_token: 'TRUE'
+  methods: [DELETE]

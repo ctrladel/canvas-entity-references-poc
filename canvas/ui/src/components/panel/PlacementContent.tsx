@@ -10,6 +10,7 @@ import { typeName, wordsFor } from '@/components/panel/referenceWords';
 import {
   selectHostTarget,
   selectLayout,
+  selectModel,
 } from '@/features/layout/layoutModelSlice';
 import { findComponentByUuid } from '@/features/layout/layoutUtils';
 import { scopeTarget } from '@/features/layout/linkTargets';
@@ -21,6 +22,7 @@ import {
   useGetTreeReferenceFieldsQuery,
   useGetTreeReferenceTargetsQuery,
 } from '@/services/treeReference';
+import { isPropSourceComponent } from '@/types/Component';
 
 import type { TreeReferenceSearchResult } from '@/services/treeReference';
 
@@ -99,6 +101,7 @@ const PlacementContent = ({ uuid }: { uuid: string }) => {
   const dispatch = useAppDispatch();
   const layout = useAppSelector(selectLayout);
   const hostTarget = useAppSelector(selectHostTarget);
+  const entry = useAppSelector(selectModel)[uuid];
   const { data: components } = useGetComponentsQuery();
   const { data: groupsData } = useGetTreeReferenceTargetsQuery();
   const groups = groupsData ?? [];
@@ -129,7 +132,11 @@ const PlacementContent = ({ uuid }: { uuid: string }) => {
   useEffect(() => {
     const next = focusNext.current;
     const target =
-      next === 'search' ? searchRef.current : next === 'value' ? valueRef.current : null;
+      next === 'search'
+        ? searchRef.current
+        : next === 'value'
+          ? valueRef.current
+          : null;
     if (target) {
       focusNext.current = null;
       target.focus();
@@ -165,6 +172,18 @@ const PlacementContent = ({ uuid }: { uuid: string }) => {
   );
 
   if (requirement === undefined) {
+    // The form below has something to show: props the Pattern exposes, or
+    // overrides that no longer apply and can be removed.
+    const exposes =
+      isPropSourceComponent(component) &&
+      Object.keys(component.propSources).length > 0;
+    const holdsOverrides =
+      Object.keys(entry?.resolved ?? {}).length > 0 ||
+      Object.keys((entry as { source?: object } | undefined)?.source ?? {})
+        .length > 0;
+    if (exposes || holdsOverrides) {
+      return null;
+    }
     return (
       <div className={styles.field}>
         <Text
@@ -230,7 +249,9 @@ const PlacementContent = ({ uuid }: { uuid: string }) => {
           id: `${id}-field`,
           value: fields.some((field) => field.reference === own) ? own : '',
           onChange: (event: React.ChangeEvent<HTMLSelectElement>) => {
-            const field = fields.find((f) => f.reference === event.target.value);
+            const field = fields.find(
+              (f) => f.reference === event.target.value,
+            );
             if (field) {
               choose(field.reference, field.target);
             }

@@ -29,6 +29,7 @@ class LinkedProp extends RenderElementBase {
    * - #field_link_suggestions: An array of field name suggestions for linking.
    * - #is_required: Whether the prop is required.
    * - #read_only: Whether the link can't be changed or removed here.
+   * - #prop_label_data: (optional) Data for the label of the prop, as a string.
    *
    * @see \Drupal\canvas\PropSource\LinkablePropSourceInterface
    */
@@ -86,7 +87,12 @@ class LinkedProp extends RenderElementBase {
         '#type' => 'label',
         '#title' => $sdc_prop_label,
         '#required' => $is_required,
-      ],
+      ] + (empty($element['#prop_label_data']) ? [] : [
+        // Data a form alteration handed the label of this prop, as it does for
+        // a prop that is not linked.
+        // @see \Drupal\canvas\Plugin\Canvas\ComponentSource\JsonSchemaPropsComponentSourceBase::processElementTreeLinkerLabels()
+        '#attributes' => ['prop_label_data' => $element['#prop_label_data']],
+      ]),
       'post_label' => $element['#read_only'] ? [] : [
         // @see ui/src/components/form/components/drupal/PropLinker.tsx, the
         // template that renders `prop_linker`.

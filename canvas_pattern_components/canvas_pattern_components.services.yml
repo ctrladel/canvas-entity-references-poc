@@ -18,6 +18,11 @@ services:
       - '@Drupal\canvas\Storage\ComponentTreeLoader'
       - '@Drupal\canvas\ComponentTreeLinkGuard'
       - '@current_user'
+  Drupal\canvas_pattern_components\Controller\PatternExposureController:
+    arguments:
+      - '@Drupal\canvas\AutoSave\AutoSaveManager'
+      - '@Drupal\canvas\Audit\ComponentAudit'
+      - '@Drupal\canvas\Storage\ComponentTreeLoader'
   # Canvas' services, reachable by validators and the PluginExists constraint,
   # which fetch them from the container by ID.
   canvas_pattern_components.entity_field_matcher:

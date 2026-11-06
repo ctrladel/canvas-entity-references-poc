@@ -60,6 +60,9 @@ export interface PatternBindingConflict {
   status: 'confirmation_required';
   links: number;
   placements: number;
+  // How many placements hold overrides that stop applying while the Pattern is
+  // not linked. The line about them is in `message`.
+  overrides: number;
   message: string;
 }
 

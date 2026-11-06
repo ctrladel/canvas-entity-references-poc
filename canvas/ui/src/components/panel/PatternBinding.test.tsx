@@ -118,9 +118,11 @@ describe('PatternBinding (the Pattern tab)', () => {
     await ready();
     expect(screen.getByText('Content this pattern is for')).toBeInTheDocument();
     expect(typeSelect().value).toBe('');
-    expect(
-      Array.from(typeSelect().options).map((o) => o.textContent),
-    ).toEqual(['Not linked', 'Content', 'User']);
+    expect(Array.from(typeSelect().options).map((o) => o.textContent)).toEqual([
+      'Not linked',
+      'Content',
+      'User',
+    ]);
     expect(screen.queryByTestId('entity-binding-trigger')).toBeNull();
     // Without a type there is nothing to tick.
     expect(screen.queryAllByRole('checkbox')).toEqual([]);
@@ -257,6 +259,34 @@ describe('PatternBinding (the Pattern tab)', () => {
     fireEvent.click(screen.getByTestId('pattern-binding-cancel'));
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
     expect(posts).toHaveLength(1);
+  });
+
+  it('shows the line about placements with overrides, which are only inert until it is linked again', async () => {
+    const message = [
+      'Nothing changes on the live site until you publish.',
+      '1 placement has overridden props that will stop applying until the pattern is linked to content again.',
+    ].join('\n');
+    stubServer({ targets: ['node:article'], unpublished: false }, () =>
+      json({
+        status: 'confirmation_required',
+        links: 0,
+        placements: 1,
+        overrides: 1,
+        message,
+      }),
+    );
+    renderBinding();
+    fireEvent.click(await bundleBox('Article'));
+    await screen.findByRole('alertdialog');
+    const lines = screen
+      .getByTestId('pattern-binding-warning')
+      .querySelectorAll('p');
+    expect(lines[1]).toHaveTextContent(
+      '1 placement has overridden props that will stop applying',
+    );
+    expect(screen.getByTestId('pattern-binding-confirm')).toHaveTextContent(
+      'Remove link',
+    );
   });
 
   it('confirming sends the choice again with confirm', async () => {

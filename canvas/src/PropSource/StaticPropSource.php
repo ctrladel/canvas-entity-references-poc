@@ -479,7 +479,7 @@ final class StaticPropSource extends PropSourceBase {
     };
   }
 
-  public function getWidget(string $component_config_entity_id, ?string $component_config_entity_version, string $prop_name, string $sdc_prop_label, ?string $field_widget_plugin_id, ?string $sdc_prop_description = NULL, ?array $field_widget_settings = NULL): WidgetInterface {
+  public function getWidget(string $component_config_entity_id, ?string $component_config_entity_version, string $prop_name, string $sdc_prop_label, ?string $field_widget_plugin_id, ?string $sdc_prop_description = NULL, ?array $field_widget_settings = NULL, ?string $field_name = NULL): WidgetInterface {
     // @phpstan-ignore-next-line
     $field_widget_plugin_manager = \Drupal::service('plugin.manager.field.widget');
     \assert($field_widget_plugin_manager instanceof WidgetPluginManager);
@@ -499,7 +499,7 @@ final class StaticPropSource extends PropSourceBase {
         // interfering. As this name is used in the client UI and can have
         // consequences, `canvas_load_allowed_values_for_component_prop`
         // won't allow  caching.
-        ->setName($prop_name)
+        ->setName($field_name ?? $prop_name)
         // This is a conjured field storage definition; the widget needs precise
         // context. (For example to load the correct allowed values.)
         // @see \Drupal\Core\Field\FieldDefinitionInterface::getDisplayOptions

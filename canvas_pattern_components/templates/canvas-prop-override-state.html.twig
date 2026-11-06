@@ -1,0 +1,29 @@
+{#
+/**
+ * @file
+ * The state of an exposed prop in the form of a placement of a Pattern.
+ *
+ * Available variables:
+ * - variant: `inherited` (no override) or `stale` (an override that does not
+ *   apply). An overridden prop is its own field, with the control that goes back
+ *   in its label.
+ * - prop_name: The exposed name.
+ * - title: The label of the exposed prop.
+ * - source: Where the value comes from when it is not overridden: `pattern` or
+ *   `content`.
+ * - reason: Why a stale override does not apply.
+ * - display: JSON, what an inherited prop shows now: `text`, `image`, `set` or
+ *   `unset`.
+ * - seed: JSON, the static source and value an override starts from, or empty.
+ */
+#}
+<drupal-canvas-prop-override-state
+    variant="{{ variant }}"
+    prop-name="{{ prop_name }}"
+    title="{{ title }}"
+    source="{{ source }}"
+    reason="{{ reason }}"
+    display="{{ display }}"
+    seed="{{ seed }}"
+>
+</drupal-canvas-prop-override-state>

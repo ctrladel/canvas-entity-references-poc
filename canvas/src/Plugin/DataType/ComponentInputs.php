@@ -15,7 +15,6 @@ use Drupal\canvas\PropSource\AdaptedPropSource;
 use Drupal\canvas\PropSource\PropSource;
 use Drupal\canvas\PropSource\StaticPropSource;
 use Drupal\canvas\Utility\ColorPropReferences;
-use Drupal\canvas\Utility\ComponentMetadataHelper;
 use Drupal\Component\Serialization\Json;
 use Drupal\Component\Utility\NestedArray;
 use Drupal\Core\Config\Schema\Mapping;
@@ -108,14 +107,11 @@ final class ComponentInputs extends TypedData implements ContentAwareDependentIn
     // Without prop schemas one string prop cannot be told apart from another.
     // An unresolvable component instance is invalid and matches nothing,
     // mirroring how the rest of this class treats one.
-    if (!$source instanceof JsonSchemaPropsComponentSourceBase) {
-      return [];
-    }
-    $prop_schemas = ComponentMetadataHelper::getNonAttributeComponentProperties($source->getMetadata());
+    $refs = $source?->getInputSchemaRefs() ?? [];
 
     return \array_values(\array_filter(
       \array_keys($this->inputs),
-      static fn (string $prop_name): bool => ($prop_schemas[$prop_name]['$ref'] ?? NULL) === $ref,
+      static fn (string $prop_name): bool => ($refs[$prop_name] ?? NULL) === $ref,
     ));
   }
 

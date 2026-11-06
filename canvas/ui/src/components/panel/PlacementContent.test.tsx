@@ -71,6 +71,15 @@ const components = {
     propSources: {},
     patternMappedBundles: [],
   },
+  // Exposes a prop, though it is not linked to content.
+  'pattern.exposes': {
+    id: 'pattern.exposes',
+    name: 'Exposes',
+    propSources: {
+      tone: { expression: 'x', sourceType: 'static:field_item:string' },
+    },
+    patternMappedBundles: [],
+  },
   // Not a Pattern.
   card: { id: 'card', name: 'Card', propSources: {} },
 };
@@ -151,7 +160,7 @@ const stubServer = () => {
   );
 };
 
-const setup = async (node: object, hostTarget?: string) => {
+const setup = async (node: object, hostTarget?: string, model: object = {}) => {
   const store = makeStore({
     configuration: { ...configuration, baseUrl: 'http://localhost/' },
   });
@@ -172,7 +181,7 @@ const setup = async (node: object, hostTarget?: string) => {
           components: [node],
         },
       ],
-      model: {},
+      model,
       updatePreview: false,
       hostTarget,
     } as any),
@@ -257,6 +266,24 @@ describe('PlacementContent', () => {
     expect(screen.queryByRole('combobox')).toBeNull();
   });
 
+  it('does not say there is nothing to set when the placement holds overrides that do not apply', async () => {
+    await setup(place('pattern.plain'), undefined, {
+      p: { resolved: { old: 'x' }, source: { old: { sourceType: 's' } } },
+    });
+    await waitFor(() =>
+      expect(screen.queryByTestId('placement-content-about')).toBeNull(),
+    );
+    expect(screen.queryByText(/nothing to set/)).toBeNull();
+  });
+
+  it('does not say there is nothing to set when the Pattern exposes props', async () => {
+    await setup(place('pattern.exposes'));
+    await waitFor(() =>
+      expect(screen.queryByTestId('placement-content-about')).toBeNull(),
+    );
+    expect(screen.queryByText(/nothing to set/)).toBeNull();
+  });
+
   it('is not there for a component that is not a Pattern', async () => {
     await setup(place('card'));
     expect(screen.queryByText('Content')).toBeNull();
@@ -266,7 +293,9 @@ describe('PlacementContent', () => {
   describe('the chosen state', () => {
     it('is a field of the normal control height, whose value is a button, with the bundle and a clear control inside', async () => {
       await setup(place('pattern.both', { reference: ALPHA }));
-      const value = await screen.findByRole('button', { name: /Alpha article/ });
+      const value = await screen.findByRole('button', {
+        name: /Alpha article/,
+      });
       expect(screen.queryByRole('combobox')).toBeNull();
       // The bundle is shown as the bundle, not as "Content: Article".
       expect(value).toHaveTextContent('Article');
@@ -284,10 +313,14 @@ describe('PlacementContent', () => {
 
     it('changes the content with the value, and puts focus in the search box', async () => {
       const store = await setup(place('pattern.both', { reference: ALPHA }));
-      fireEvent.click(await screen.findByRole('button', { name: /Alpha article/ }));
+      fireEvent.click(
+        await screen.findByRole('button', { name: /Alpha article/ }),
+      );
       const box = await screen.findByRole('combobox', { name: 'Content' });
       await waitFor(() => expect(box).toHaveFocus());
-      fireEvent.click(await screen.findByRole('option', { name: /Gamma news/ }));
+      fireEvent.click(
+        await screen.findByRole('option', { name: /Gamma news/ }),
+      );
       await waitFor(() => expect(referenceOf(store)).toBe(GAMMA));
       // Focus stays in the field, on its value.
       const value = await screen.findByRole('button', { name: /Gamma news/ });
@@ -296,17 +329,23 @@ describe('PlacementContent', () => {
 
     it('goes back to the value on Escape, and keeps the content', async () => {
       const store = await setup(place('pattern.both', { reference: ALPHA }));
-      fireEvent.click(await screen.findByRole('button', { name: /Alpha article/ }));
+      fireEvent.click(
+        await screen.findByRole('button', { name: /Alpha article/ }),
+      );
       const box = await screen.findByRole('combobox', { name: 'Content' });
       fireEvent.keyDown(box, { key: 'Escape' });
-      const value = await screen.findByRole('button', { name: /Alpha article/ });
+      const value = await screen.findByRole('button', {
+        name: /Alpha article/,
+      });
       await waitFor(() => expect(value).toHaveFocus());
       expect(referenceOf(store)).toBe(ALPHA);
     });
 
     it('clears the content from inside the field, and keeps focus in the field', async () => {
       const store = await setup(place('pattern.both', { reference: ALPHA }));
-      fireEvent.click(await screen.findByRole('button', { name: 'Clear Content' }));
+      fireEvent.click(
+        await screen.findByRole('button', { name: 'Clear Content' }),
+      );
       await waitFor(() => expect(referenceOf(store)).toBeUndefined());
       const box = await screen.findByRole('combobox', { name: 'Content' });
       await waitFor(() => expect(box).toHaveFocus());
@@ -321,7 +360,9 @@ describe('PlacementContent', () => {
         'data-warning',
         'true',
       );
-      expect(screen.getByRole('button', { name: 'Clear Content' })).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Clear Content' }),
+      ).toBeInTheDocument();
     });
   });
 

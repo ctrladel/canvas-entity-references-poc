@@ -396,10 +396,17 @@ const ComponentInstanceForm: React.FC<ComponentInstanceFormProps> = () => {
       : {};
 
     // Check if this component has any props or not.
-    if (
+    // A Pattern placement that exposes nothing may still hold overrides that do
+    // not apply, and its form is where they are removed.
+    const holdsInputs =
+      Object.keys(selectedModel.resolved ?? {}).length > 0 ||
+      Object.keys((selectedModel as EvaluatedComponentModel).source ?? {})
+        .length > 0;
+    const noForm =
       isPropSourceComponent(component) &&
-      Object.keys(selectedComponentFieldData).length === 0
-    ) {
+      Object.keys(selectedComponentFieldData).length === 0 &&
+      !holdsInputs;
+    if (noForm) {
       setFormQueryString('');
       setEmptyProp(true);
     } else {
@@ -452,7 +459,7 @@ const ComponentInstanceForm: React.FC<ComponentInstanceFormProps> = () => {
       previousReferenceAboveRef.current !== referenceAbove ||
       sourceChanged;
 
-    if (shouldUpdate) {
+    if (shouldUpdate && !noForm) {
       // Build the query string only when needed
       const tree = findComponentByUuid(layout, selectedComponent);
       const query = new URLSearchParams({
@@ -505,19 +512,26 @@ const ComponentInstanceForm: React.FC<ComponentInstanceFormProps> = () => {
     );
   }
 
+  const noPropsMessage =
+    componentSource === 'Module component' && emptyProp ? (
+      <Text size="4">This component has no props.</Text>
+    ) : (
+      ''
+    );
+
+  // A component with no props has no form to fetch, but still says so.
+  if (!formQueryString) {
+    return emptyProp ? noPropsMessage : null;
+  }
+
   return (
-    formQueryString &&
     renderComponentId === selectedComponent && (
       <>
         <ComponentInstanceFormRenderer
           queryString={formQueryString}
           awaitingRebuild={builtVersion !== rebuildVersion}
         />
-        {componentSource === 'Module component' && emptyProp ? (
-          <Text size="4">This component has no props.</Text>
-        ) : (
-          ''
-        )}
+        {noPropsMessage}
       </>
     )
   );

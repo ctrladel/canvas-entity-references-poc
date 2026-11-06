@@ -291,6 +291,11 @@ export const syncPropSourcesToResolvedValues = (
         // Ignore this source as the value is now empty.
         return carry;
       }
+      if (!(propName in fieldData)) {
+        // Not a prop of the component (such as an override of a Pattern that
+        // no longer applies): the form has nothing to say about it.
+        return { ...carry, [propName]: source };
+      }
       return {
         ...carry,
         [propName]: {
@@ -674,6 +679,16 @@ export const _addNewComponentToLayout =
     }
     // Populate the model data with the default values
     const buildInitialData = (component: CanvasComponent): ComponentModel => {
+      // A placement of a Pattern starts without overrides: what its exposed
+      // props advertise is the Pattern's own value, which the placement follows
+      // until a prop is overridden. Seeding it would override every one.
+      if (component.patternMappedBundles !== undefined) {
+        const withoutOverrides: EvaluatedComponentModel = {
+          resolved: {},
+          source: {},
+        };
+        return withoutOverrides;
+      }
       if (isPropSourceComponent(component)) {
         const initialData: EvaluatedComponentModel = {
           resolved: {},
