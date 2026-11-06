@@ -64,7 +64,7 @@ final class HostEntityUrlPropSource extends PropSourceBase implements LinkablePr
       throw new MissingHostEntityException();
     }
     // An entity that is not saved yet has no URL: a stand-in host, such as the
-    // one a component under a reference is converted against.
+    // one a Pattern's editor previews against when there is no entity to show.
     if ($host_entity->isNew()) {
       return new EvaluationResult(NULL);
     }

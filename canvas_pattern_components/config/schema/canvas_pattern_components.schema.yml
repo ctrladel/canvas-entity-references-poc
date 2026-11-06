@@ -21,3 +21,126 @@ canvas.component_source_settings.pattern:
   constraints:
     FullyValidatable: ~
   mapping: {}
+
+# The entity type and bundles a Pattern's linked props resolve against.
+canvas.pattern.*.third_party.canvas_pattern_components:
+  type: mapping
+  label: 'Pattern entity binding'
+  constraints:
+    FullyValidatable: ~
+    PatternBinding: ~
+    PatternReferences: ~
+  mapping:
+    # The three keys of the binding go together, or none is there. They are not
+    # required one by one: the PatternBinding constraint says what is missing.
+    entity_type_id:
+      requiredKey: false
+      type: string
+      label: 'Entity type ID'
+      constraints:
+        NotBlank: []
+    bundles:
+      requiredKey: false
+      type: sequence
+      label: 'Bundles'
+      constraints:
+        NotBlank: []
+      sequence:
+        type: string
+        label: 'Bundle'
+        constraints:
+          NotBlank: []
+    links:
+      requiredKey: false
+      type: sequence
+      label: 'Linked props, keyed by inner component instance UUID'
+      sequence:
+        type: sequence
+        label: 'Links, keyed by prop name'
+        sequence:
+          type: sequence
+          label: 'The links of one prop, keyed by the bundle each holds for. A bundle without one keeps the static value.'
+          sequence:
+            # By the kind of prop source, which decides which keys it has.
+            type: canvas_pattern_components.link.[sourceType]
+    references:
+      requiredKey: false
+      type: sequence
+      label: 'Field references that are read from the entity of the placement, keyed by inner component instance UUID'
+      sequence:
+        type: sequence
+        label: 'The field reference of one instance, keyed by the bundle it holds for. A bundle without one reads from the entity itself.'
+        sequence:
+          type: string
+          label: 'Field reference'
+          constraints:
+            NotBlank: []
+
+# Any other kind of source is not a link, and is reported as such.
+canvas_pattern_components.link.*:
+  type: mapping
+  label: 'Link'
+  constraints:
+    FullyValidatable: ~
+  mapping:
+    sourceType:
+      type: string
+      label: 'Prop source type'
+      constraints:
+        Choice:
+          - entity-field
+          - host-entity-url
+
+# A field of the entity the Pattern is bound to, optionally adapted.
+canvas_pattern_components.link.entity-field:
+  type: mapping
+  label: 'Link: an entity-field source'
+  constraints:
+    FullyValidatable: ~
+    PatternLink: ~
+  mapping:
+    sourceType:
+      type: string
+      label: 'Prop source type'
+      constraints:
+        Choice:
+          - entity-field
+    expression:
+      type: string
+      label: 'Entity field prop expression'
+      constraints:
+        NotBlank: []
+        ValidStructuredDataPropExpression:
+          choices:
+            - FieldPropExpression
+            - FieldObjectPropsExpression
+            - ReferenceFieldPropExpression
+          message: 'The expression is valid, but not one of the allowed types: %choices.'
+        ExpressionTargetEntityBundleExists: ~
+    adapter:
+      requiredKey: false
+      type: string
+      label: 'Adapter plugin ID'
+      constraints:
+        PluginExists:
+          manager: 'canvas_pattern_components.adapter_manager'
+          interface: 'Drupal\canvas\Plugin\Adapter\AdapterInterface'
+
+# The URL of the entity.
+canvas_pattern_components.link.host-entity-url:
+  type: mapping
+  label: 'Link: the URL of the entity'
+  constraints:
+    FullyValidatable: ~
+    PatternLink: ~
+  mapping:
+    sourceType:
+      type: string
+      label: 'Prop source type'
+      constraints:
+        Choice:
+          - host-entity-url
+    absolute:
+      requiredKey: false
+      type: boolean
+      label: 'Whether the URL is absolute'

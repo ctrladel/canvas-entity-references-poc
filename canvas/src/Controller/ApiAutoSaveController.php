@@ -427,6 +427,8 @@ final class ApiAutoSaveController extends ApiControllerBase {
     $processed_content_groups = [];
     foreach ($loadedEntities as $entity) {
       if ($entity instanceof ConfigEntityInterface) {
+        // Lets a module turn a draft into its storable form before validation.
+        $this->moduleHandler->alter('canvas_auto_save_publish', $entity);
         $violations = $entity->getTypedData()->validate();
         if ($violations->count() > 0) {
           $violationSets[] = new EntityConstraintViolationList($entity, $violations);

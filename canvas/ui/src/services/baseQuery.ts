@@ -1,5 +1,6 @@
 import { fetchBaseQuery } from '@reduxjs/toolkit/query/react';
 
+import { patternBindingMayHaveChanged } from '@/features/pattern/patternBundleSlice';
 import { fetchCsrfToken, forgetCsrfToken } from '@/utils/csrf';
 import { getCanvasSettings } from '@/utils/drupal-globals';
 
@@ -11,6 +12,14 @@ import type {
 } from '@reduxjs/toolkit/query/react';
 import type { RootState } from '@/app/store';
 import type { AppConfiguration } from '@/features/configuration/configurationSlice';
+
+// The header in which the bundle a Pattern is edited on is named, as
+// `pattern_id:bundle`.
+export const PATTERN_BUNDLE_HEADER = 'X-Canvas-Pattern-Bundle';
+// Response header with the reason a request for a Pattern was refused.
+export const PATTERN_ERROR_HEADER = 'X-Canvas-Pattern-Error';
+// The write named no bundle, or one that is not bound, on a Pattern of several.
+const PATTERN_BUNDLE_REQUIRED = 'bundle-required';
 
 export const baseQuery: BaseQueryFn<
   string | FetchArgs,
@@ -145,6 +154,19 @@ const rawBaseQuery = (appConfiguration: AppConfiguration) => {
   const defaultQuery = fetchBaseQuery({
     baseUrl,
     prepareHeaders: async (headers, api) => {
+      // A Pattern bound to several bundles is edited on one at a time: say
+      // which, with every request.
+      // (A store that has no such slice, as in some tests, has no bundle.)
+      const { patternId = null, bundle = null } =
+        (api.getState() as RootState).patternBundle ?? {};
+      // A request may name its own, such as the one that switches bundle.
+      if (
+        patternId !== null &&
+        bundle !== null &&
+        !headers.has(PATTERN_BUNDLE_HEADER)
+      ) {
+        headers.set(PATTERN_BUNDLE_HEADER, `${patternId}:${bundle}`);
+      }
       if (api.type === 'mutation') {
         try {
           headers.set('X-CSRF-Token', await fetchCsrfToken(baseUrl));
@@ -176,6 +198,15 @@ const rawBaseQuery = (appConfiguration: AppConfiguration) => {
     if (api.type === 'mutation' && result.error?.status === 403) {
       forgetCsrfToken(baseUrl);
       return defaultQuery(newArg, api, extraOptions);
+    }
+    // The server refuses a bundle that is not bound (any more) with a 400 and
+    // a code: what the client knows of the binding is out of date.
+    if (
+      result.error?.status === 400 &&
+      result.meta?.response?.headers.get(PATTERN_ERROR_HEADER) ===
+        PATTERN_BUNDLE_REQUIRED
+    ) {
+      api.dispatch(patternBindingMayHaveChanged());
     }
     return result;
   };

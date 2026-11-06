@@ -407,8 +407,8 @@ export const referencesUnder = (
   let count = 0;
   const walk = (node: ComponentNode) => {
     // The reference of a component that uses the entity of its own reference
-    // (a component source that shows one entity) links nothing: choosing it
-    // needs no permission to link, so moving, pasting or duplicating it needs none either. The server
+    // (a Pattern placement) links nothing: choosing it needs no permission to
+    // link, so moving, pasting or duplicating it needs none either. The server
     // counts it the same way.
     // @see \Drupal\canvas\ComponentTreeLinkGuard
     if (node.reference && !usesOwnReference(node, components)) {

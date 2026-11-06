@@ -378,7 +378,7 @@ export async function waitForPreviewRequests(): Promise<void> {
 }
 
 // A layout change the editor owes the server: made in the store, not yet in a
-// request that has finished. The layout POST of a template or another config entity is not
+// request that has finished. The layout POST of a template or a Pattern is not
 // queued like that of a page, and a request is only made once the preview
 // effect runs, so neither `activePreviewRequest` nor the store says that a
 // change is on its way.
@@ -407,7 +407,7 @@ export function expectLayoutSave(): void {
 }
 
 /**
- * Called when a layout request of a page or a config entity such as a template starts (or
+ * Called when a layout request of a page, a template or a Pattern starts (or
  * is skipped). Give the result to `endLayoutSave` once it has finished.
  */
 export function beginLayoutSave(): LayoutSaveBarrier | null {

@@ -22,12 +22,16 @@ import {
   removeComponentByUuid,
   replaceUUIDsAndUpdateModel,
 } from './layoutUtils';
+import { canLinkComponentProps, mayBringLinks } from './linkNotices';
 import {
+  componentsOf,
   dropMisplacedFieldReferences,
   dropMisplacedPastedFieldReferences,
   fieldScopes,
+  linksUnder,
   parseReference,
   reconcileLinks,
+  referencesUnder,
 } from './linkTargets';
 
 import type { PayloadAction } from '@reduxjs/toolkit';
@@ -102,6 +106,8 @@ export interface LayoutModelSliceState extends RootLayoutModel {
   // `entity_type_id:bundle` of the content a Content Template is for. Where a
   // component has no reference above it, its links read from that.
   hostTarget?: string | null;
+  // Leave `hostTarget` as it is: the layout is read again for the same editor.
+  keepHostTarget?: boolean;
 }
 
 export const initialState: LayoutModelSliceState = {
@@ -616,13 +622,22 @@ export const layoutModelSlice = createSlice({
           isInitialized = true,
           translations,
           hostTarget,
+          keepHostTarget,
         } = action.payload;
         state.layout = layout;
         state.model = model;
         state.updatePreview = updatePreview;
         state.isInitialized = isInitialized;
         state.translations = translations || {};
-        state.hostTarget = hostTarget ?? null;
+        if (!keepHostTarget) {
+          state.hostTarget = hostTarget ?? null;
+        }
+      },
+    ),
+    // For a Pattern, which follows the bundle being edited: not an edit.
+    setHostTarget: create.reducer(
+      (state, action: PayloadAction<string | null>) => {
+        state.hostTarget = action.payload;
       },
     ),
     setTranslations: create.reducer(
@@ -974,11 +989,35 @@ export const addNewPatternToLayout =
       return;
     }
 
+    // A Pattern may hold links and references. The server refuses to save
+    // them for a user without the permission; for one with it, the links the
+    // new place cannot serve return to static values as part of the insert.
+    if (
+      !mayBringLinks(
+        'add Patterns',
+        layoutModel.layout.reduce(
+          (sum, root) => sum + linksUnder(root, layoutModel.model),
+          0,
+        ),
+        layoutModel.layout.reduce(
+          (sum, root) =>
+            sum + referencesUnder(root, componentsOf(getState())),
+          0,
+        ),
+      )
+    ) {
+      return;
+    }
+    const components: ComponentsList | undefined = canLinkComponentProps()
+      ? componentsOf(getState())
+      : undefined;
+
     dispatch(
       insertNodes({
         to,
         layoutModel,
         useUUID: uuid,
+        components,
       }),
     );
 
@@ -995,6 +1034,7 @@ export const {
   setLayoutModel,
   setInitialized,
   setInitialLayoutModel,
+  setHostTarget,
   setTranslations,
   duplicateNode,
   moveNode,

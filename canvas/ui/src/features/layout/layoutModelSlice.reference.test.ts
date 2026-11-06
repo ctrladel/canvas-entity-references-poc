@@ -304,7 +304,7 @@ describe('setNodeReference', () => {
 });
 
 // A page whose components have no inputs of their own, such as one holding only
-// a component that takes no props, has an empty model. That must not make its changes
+// a Pattern placement, has an empty model. That must not make its changes
 // unrecordable: the Undo button counts them, so it would do nothing.
 describe('undo on a layout with an empty model', () => {
   const placementOnly = () => makeLoaded([comp('p')], {});

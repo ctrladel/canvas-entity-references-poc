@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 
 /**
  * The items of a link menu: what the link control of a prop (`PropLinker`)
- * and of a component (`ComponentReference`) are built from, so that
+ * and of a component or Pattern (`EntityBindingMenu`) are built from, so that
  * the two look and behave the same. A choice is an item, a group of choices
  * is a popout, and what is chosen now has a check and cannot be chosen again.
  */

@@ -6,6 +6,7 @@ import {
   setErrors,
   setPreviousPendingChanges,
 } from '@/components/review/PublishReview.slice';
+import { patternBindingMayHaveChanged } from '@/features/pattern/patternBundleSlice';
 import { baseQuery } from '@/services/baseQuery';
 import { componentAndLayoutApi } from '@/services/componentAndLayout';
 
@@ -234,6 +235,10 @@ export const pendingChangesApi = createApi({
               { type: 'PendingChanges', id: 'LIST' },
             ]),
           );
+          if (change.entity_type === 'pattern') {
+            // The draft's binding is gone with it.
+            dispatch(patternBindingMayHaveChanged());
+          }
 
           // Reset errors
           dispatch(setConflicts());

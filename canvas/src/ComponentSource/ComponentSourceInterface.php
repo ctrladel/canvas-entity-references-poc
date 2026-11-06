@@ -357,7 +357,7 @@ interface ComponentSourceInterface extends PluginInspectionInterface, Derivative
    * Whether an instance of this source takes no reference of its own.
    *
    * A source that uses the entity of its own reference but has none to offer
-   * says so here: a reference
+   * (for example a placement of an unbound Pattern) says so here: a reference
    * that is new or changed on such an instance is refused, because it would do
    * nothing. One that is as it was stored is kept, so a page can still be saved.
    *
