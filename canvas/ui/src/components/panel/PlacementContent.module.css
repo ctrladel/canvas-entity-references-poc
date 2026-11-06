@@ -1,0 +1,119 @@
+.field {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: var(--space-4);
+  gap: var(--space-1);
+}
+
+.search {
+  position: relative;
+}
+
+/* The results sit under the box, like the suggestions of an autocomplete. */
+.list {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + var(--space-1));
+  right: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  max-height: 240px;
+  padding: var(--space-1);
+  overflow-y: auto;
+  background: var(--color-panel-solid);
+  border-radius: var(--radius-3);
+  box-shadow: var(--shadow-5);
+}
+
+.option {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  min-height: var(--space-6);
+  padding-inline: var(--space-3);
+  border-radius: var(--radius-2);
+  cursor: pointer;
+  gap: var(--space-3);
+  &[data-active='true'] {
+    background: var(--accent-9);
+    color: var(--accent-contrast);
+    & .bundle {
+      color: var(--accent-contrast);
+    }
+  }
+}
+
+.bundle {
+  flex-shrink: 0;
+  color: var(--slate-11);
+}
+
+.message {
+  padding: var(--space-2) var(--space-3);
+}
+
+/* The chosen content is a text field of the usual height: its value is the
+   control that changes it, and clearing is inside it. */
+.chosen {
+  display: flex;
+  align-items: center;
+  height: 2rem;
+  padding: 1px;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px var(--slate-5);
+  gap: var(--space-1);
+  &[data-warning='true'] {
+    box-shadow: inset 0 0 0 1px var(--amber-8);
+  }
+}
+
+.value {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  height: 100%;
+  padding: 0 0 0 8px;
+  text-align: start;
+  color: var(--slate-12);
+  border: none;
+  border-radius: 4px;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  gap: var(--space-2);
+  &:focus, &:focus-visible {
+    outline: 2px solid var(--focus-8);
+  }
+}
+
+.title {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clear {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-inline-end: 3px;
+  padding: 0;
+  color: var(--slate-11);
+  border: none;
+  border-radius: var(--radius-2);
+  background: none;
+  cursor: pointer;
+  &:hover {
+    background: var(--slate-4);
+  }
+  &:focus, &:focus-visible {
+    outline: 2px solid var(--focus-8);
+  }
+}

@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace Drupal\Tests\canvas_pattern_components\Kernel;
 
 use Drupal\canvas\ComponentTreeReference;
+use Drupal\canvas\Entity\Page;
 use Drupal\canvas\Entity\Pattern;
 use Drupal\canvas_pattern_components\PatternLinks;
 use Drupal\Core\Cache\Cache;
 use Drupal\Core\Cache\CacheableMetadata;
+use Drupal\Core\Render\RendererInterface;
 use Drupal\field\Entity\FieldConfig;
 use Drupal\field\Entity\FieldStorageConfig;
 use Drupal\node\Entity\Node;
@@ -201,8 +203,48 @@ final class PatternRootScopeTest extends CanvasKernelTestBase {
     return $this->createNode('person', $title, ['field_role' => $role]);
   }
 
+  private function createTeam(string $title, string $motto = 'A motto'): NodeInterface {
+    return $this->createNode('team', $title, ['field_motto' => $motto]);
+  }
+
   private static function ref(NodeInterface $node): string {
     return \sprintf('node:%s:%s', $node->bundle(), $node->uuid());
+  }
+
+  /**
+   * @param list<NodeInterface> $nodes
+   */
+  private function createPage(array $nodes, bool $save = TRUE): Page {
+    $tree = [];
+    foreach ($nodes as $delta => $node) {
+      $tree[] = [
+        'uuid' => \sprintf('b3c8f0d2-1111-4a2b-9c3d-%012d', $delta + 1),
+        'component_id' => 'pattern.' . self::PATTERN_ID,
+        'component_version' => '::ACTIVE_VERSION_IN_SUT::',
+        'inputs' => [],
+        'reference' => self::ref($node),
+      ];
+    }
+    $page = Page::create(['title' => 'Host page', 'components' => self::populateActiveComponentVersionPlaceholders($tree)]);
+    if ($save) {
+      $page->save();
+    }
+    return $page;
+  }
+
+  private function reloadPage(Page $page): Page {
+    // Entities hold on to the entities they referenced; a request starts afresh.
+    $this->container->get('entity_type.manager')->getStorage('node')->resetCache();
+    $storage = $this->container->get('entity_type.manager')->getStorage('canvas_page');
+    $storage->resetCache([$page->id()]);
+    $reloaded = $storage->load($page->id());
+    self::assertInstanceOf(Page::class, $reloaded);
+    return $reloaded;
+  }
+
+  private function renderPage(Page $page): string {
+    $build = $page->getComponentTree()->toRenderable($page, FALSE);
+    return (string) $this->container->get(RendererInterface::class)->renderInIsolation($build);
   }
 
   private static function settings(?Pattern $pattern = NULL): array {
@@ -221,6 +263,32 @@ final class PatternRootScopeTest extends CanvasKernelTestBase {
   }
 
   /**
+   * Different fields per bundle, to different targets, each with links under it:
+   * each placement follows its own.
+   */
+  public function testEachPlacementFollowsTheFieldOfItsOwnBundle(): void {
+    $this->createPattern(self::ownFields());
+    $ann = $this->createPerson('Ann', 'Role of Ann');
+    $tea = $this->createTeam('Tea', 'Motto of Tea');
+    $article = $this->createNode('article', 'Article title', ['field_author' => $ann->id()]);
+    $news = $this->createNode('news', 'News title', ['field_byline' => $tea->id()]);
+    $html = $this->renderPage($this->createPage([$article, $news]));
+    foreach (['Ann', 'Role of Ann', 'Tea', 'Motto of Tea', 'Article title', 'News title'] as $expected) {
+      self::assertStringContainsString($expected, $html);
+    }
+    self::assertStringNotContainsString('Static card heading', $html);
+    self::assertStringNotContainsString('Static inner', $html);
+    // Each shows its own: the article's field is not read on news and the other
+    // way round.
+    $only_article = $this->renderPage($this->createPage([$article]));
+    self::assertStringContainsString('Ann', $only_article);
+    self::assertStringNotContainsString('Tea', $only_article);
+    $only_news = $this->renderPage($this->createPage([$news]));
+    self::assertStringContainsString('Tea', $only_news);
+    self::assertStringNotContainsString('Ann', $only_news);
+  }
+
+  /**
    * A field that exists only on the later bundle (alphabetically): it saves,
    * validates and renders for news, and articles show their static values.
    */
@@ -232,6 +300,49 @@ final class PatternRootScopeTest extends CanvasKernelTestBase {
     ];
     $pattern = $this->createPattern($references, $links);
     self::assertSame($references, self::settings($pattern)['references']);
+    $tea = $this->createTeam('Tea', 'Motto of Tea');
+    $article = $this->createNode('article', 'Article title');
+    $news = $this->createNode('news', 'News title', ['field_byline' => $tea->id()]);
+    $html = $this->renderPage($this->createPage([$news]));
+    self::assertStringContainsString('Tea', $html);
+    self::assertStringContainsString('Motto of Tea', $html);
+    $html = $this->renderPage($this->createPage([$article]));
+    self::assertStringContainsString('Static card heading', $html);
+    self::assertStringContainsString('Static inner', $html);
+    self::assertStringNotContainsString('Oops, something went wrong', $html);
+    self::assertStringNotContainsString('Tea', $html);
+  }
+
+  /**
+   * One field name on both bundles, with different targets: each resolves to its
+   * own.
+   */
+  public function testSameFieldNameWithDifferentTargetsResolvesPerBundle(): void {
+    $this->createPattern([self::CARD => ['article' => 'field:field_ref', 'news' => 'field:field_ref']]);
+    $ann = $this->createPerson('Ann', 'Role of Ann');
+    $tea = $this->createTeam('Tea', 'Motto of Tea');
+    $article = $this->createNode('article', 'Article title', ['field_ref' => $ann->id()]);
+    $news = $this->createNode('news', 'News title', ['field_ref' => $tea->id()]);
+    $html = $this->renderPage($this->createPage([$article, $news]));
+    foreach (['Ann', 'Role of Ann', 'Tea', 'Motto of Tea'] as $expected) {
+      self::assertStringContainsString($expected, $html);
+    }
+  }
+
+  /**
+   * A field reference below another one reads from its target, for the bundle.
+   */
+  public function testFieldBelowAFieldIsReadFromItsTarget(): void {
+    $references = [
+      self::CARD => ['article' => 'field:field_author'],
+      self::DEEP => ['article' => 'field:field_mentor'],
+    ];
+    $links = [self::DEEP => ['text' => ['article' => self::link(self::PERSON_TITLE)]]];
+    $this->createPattern($references, $links);
+    $mentor = $this->createPerson('Mentor Max');
+    $ann = $this->createNode('person', 'Ann', ['field_mentor' => $mentor->id()]);
+    $article = $this->createNode('article', 'Article title', ['field_author' => $ann->id()]);
+    self::assertStringContainsString('Mentor Max', $this->renderPage($this->createPage([$article])));
   }
 
   /**
@@ -507,6 +618,35 @@ final class PatternRootScopeTest extends CanvasKernelTestBase {
   }
 
   /**
+   * Editing the entity a placement follows, or the field that follows it,
+   * invalidates the placement.
+   */
+  public function testChangesToFollowedEntitiesInvalidateThePlacement(): void {
+    $pattern = $this->createPattern(self::ownFields());
+    $ann = $this->createPerson('Ann', 'Role of Ann');
+    $bea = $this->createPerson('Bea', 'Role of Bea');
+    $article = $this->createNode('article', 'Article title', ['field_author' => $ann->id()]);
+    $page = $this->createPage([$article]);
+    $build = $page->getComponentTree()->toRenderable($page, FALSE);
+    $this->container->get(RendererInterface::class)->renderInIsolation($build);
+    $tags = CacheableMetadata::createFromRenderArray($build)->getCacheTags();
+    foreach ([$ann->getCacheTags(), $article->getCacheTags(), $pattern->getCacheTags(), ['config:field.field.node.article.field_author']] as $expected) {
+      self::assertSame([], \array_diff($expected, $tags), 'A placement bubbles what it followed: ' . \implode(',', $expected));
+    }
+    $cache = $this->container->get('cache.render');
+    $store = static fn () => $cache->set('cached_page', 'cached page', Cache::PERMANENT, $tags);
+    $store();
+    $ann->set('title', 'Ann renamed')->save();
+    self::assertFalse($cache->get('cached_page'), 'Editing the followed person invalidates it.');
+    // A fresh page: this one holds on to the entities it already loaded.
+    self::assertStringContainsString('Ann renamed', $this->renderPage($this->reloadPage($page)));
+    $store();
+    $article->set('field_author', $bea->id())->save();
+    self::assertFalse($cache->get('cached_page'), 'Following another person invalidates it.');
+    self::assertStringContainsString('Bea', $this->renderPage($this->reloadPage($page)));
+  }
+
+  /**
    * A link under a reference fits that reference's target, though it is stored
    * for the root bundle: a picked reference in the tree, and a field per bundle.
    */
@@ -517,6 +657,8 @@ final class PatternRootScopeTest extends CanvasKernelTestBase {
     ];
     $pattern = $this->createPattern([], $links, card_reference: self::ref($ann));
     self::assertSame([], self::violations($pattern));
+    $article = $this->createNode('article', 'Article title');
+    self::assertStringContainsString('Role of Ann', $this->renderPage($this->createPage([$article])));
     // The root bundle's own field is not what the card's body reads.
     $wrong = [self::INNER => ['text' => ['article' => self::link(self::ARTICLE_TITLE)]]];
     $found = self::violations($this->buildPattern([], $wrong, card_reference: self::ref($ann)));

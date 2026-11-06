@@ -14,6 +14,7 @@ use Drupal\canvas\TypedData\BetterEntityDataDefinition;
 use Drupal\canvas_pattern_components\EventSubscriber\PatternEditorRequestSubscriber;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Extension\ThemeInstallerInterface;
+use Drupal\Core\Render\RendererInterface;
 use Drupal\Core\Url;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 use Drupal\field\Entity\FieldConfig;
@@ -176,6 +177,24 @@ final class PatternMixedBundlesRouteTest extends ApiLayoutControllerTestBase {
    */
   private static function storedSettings(): array {
     return Pattern::load(self::PATTERN_ID)?->getThirdPartySettings('canvas_pattern_components') ?? [];
+  }
+
+  private function renderPage(Node ...$nodes): string {
+    $tree = [];
+    foreach ($nodes as $delta => $node) {
+      $component = Component::load('pattern.' . self::PATTERN_ID);
+      $tree[] = [
+        'uuid' => \sprintf('b3c8f0d2-1111-4a2b-9c3d-%012d', $delta + 1),
+        'component_id' => 'pattern.' . self::PATTERN_ID,
+        'component_version' => $component?->getActiveVersion(),
+        'inputs' => [],
+        'reference' => \sprintf('node:%s:%s', $node->bundle(), $node->uuid()),
+      ];
+    }
+    $page = Page::create(['title' => 'Host page', 'components' => $tree]);
+    $page->save();
+    $build = $page->getComponentTree()->toRenderable($page, FALSE);
+    return (string) $this->container->get(RendererInterface::class)->renderInIsolation($build);
   }
 
   /**
@@ -371,6 +390,9 @@ final class PatternMixedBundlesRouteTest extends ApiLayoutControllerTestBase {
     self::assertSame([self::UUID => ['text' => self::BOTH]], $stored->getThirdPartySetting('canvas_pattern_components', 'links'));
     self::assertSame('Example heading', $stored->getComponentTree()->getComponentTreeItemByUuid(self::UUID)?->getInputs()['text']);
     self::assertCount(0, $stored->getTypedData()->validate());
+    $html = $this->renderPage($article, $news);
+    self::assertStringContainsString('Article title', $html);
+    self::assertStringContainsString('News headline', $html);
   }
 
   /**
@@ -459,6 +481,37 @@ final class PatternMixedBundlesRouteTest extends ApiLayoutControllerTestBase {
   }
 
   /**
+   * Removing a bundle counts the placements that show it, not all of them.
+   */
+  public function testRemovingABundleCountsOnlyThePlacementsOfThatBundle(): void {
+    $this->createPattern();
+    $article = $this->createNode('article', 'Article title');
+    $news = $this->createNode('news', 'News title', 'News headline');
+    $article_ref = \sprintf('node:article:%s', $article->uuid());
+    $news_ref = \sprintf('node:news:%s', $news->uuid());
+    // Four placements of the Pattern: three on articles, one on news. Another
+    // Pattern's placement of news is not this Pattern's.
+    $this->createPlacements([$article_ref, $article_ref]);
+    $this->createPlacements([$article_ref, $news_ref]);
+    $other = Pattern::create(['id' => 'other_card', 'label' => 'Other card', 'status' => TRUE]);
+    $other->setThirdPartySetting('canvas_pattern_components', 'entity_type_id', 'node');
+    $other->setThirdPartySetting('canvas_pattern_components', 'bundles', ['news']);
+    $other->setThirdPartySetting('canvas_pattern_components', 'links', []);
+    $other->setComponentTree([['uuid' => '8d6a1f50-3333-4c4d-9e5f-000000000001', 'component_id' => self::COMPONENT_ID, 'component_version' => Component::load(self::COMPONENT_ID)?->getActiveVersion(), 'inputs' => ['text' => 'Other', 'element' => 'h1']]]);
+    $other->save();
+    $this->createPlacements([$news_ref], 'pattern.other_card');
+
+    $json = self::decodeResponse($this->postBinding(['node:article']));
+    self::assertSame('confirmation_required', $json['status']);
+    self::assertSame(1, $json['placements'], 'Only the placement of news is affected.');
+    self::assertSame(0, $json['links']);
+    self::assertStringContainsString('1 placement ', $json['message']);
+    self::assertStringContainsString('News', $json['message'], 'It says which content stops showing.');
+    self::assertStringNotContainsString('new type', $json['message']);
+
+  }
+
+  /**
    * With no placement of the removed bundle, nothing needs confirming.
    */
   public function testRemovingAnUnplacedBundleNeedsNoConfirmation(): void {
@@ -507,6 +560,7 @@ final class PatternMixedBundlesRouteTest extends ApiLayoutControllerTestBase {
       $this->requestForm('news');
       $this->getLayout('news');
       self::assertSame(Response::HTTP_OK, $this->makePublishAllRequest()->getStatusCode());
+      $this->renderPage($article, $news);
     }
     finally {
       \restore_error_handler();

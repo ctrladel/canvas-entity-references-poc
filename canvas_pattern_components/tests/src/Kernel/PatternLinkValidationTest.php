@@ -5,13 +5,16 @@ declare(strict_types=1);
 namespace Drupal\Tests\canvas_pattern_components\Kernel;
 
 use Drupal\canvas\Entity\Component;
+use Drupal\canvas\Entity\Page;
 use Drupal\canvas\Entity\Pattern;
 use Drupal\canvas_pattern_components\Hook\PatternComponentHooks;
 use Drupal\Core\Config\ConfigImporter;
 use Drupal\Core\Config\StorageComparer;
 use Drupal\Core\Config\StorageInterface;
+use Drupal\Core\Render\RendererInterface;
 use Drupal\field\Entity\FieldConfig;
 use Drupal\field\Entity\FieldStorageConfig;
+use Drupal\node\Entity\Node;
 use Drupal\node\Entity\NodeType;
 use Drupal\Tests\canvas\Kernel\CanvasKernelTestBase;
 use Drupal\Tests\canvas\Traits\DataProviderWithComponentTreeTrait;
@@ -285,6 +288,43 @@ final class PatternLinkValidationTest extends CanvasKernelTestBase {
   }
 
   /**
+   * ... and a placement whose reference is stale keeps the page working.
+   */
+  public function testDeletingTheBundleLeavesPlacementsRendering(): void {
+    $this->buildPattern([self::CTA => ['href' => ['article' => ['sourceType' => 'host-entity-url', 'absolute' => TRUE]]]])->save();
+    $node = Node::create(['type' => 'article', 'title' => 'Gone', 'status' => 1]);
+    $node->save();
+    $page = Page::create([
+      'title' => 'Host page',
+      'components' => self::populateActiveComponentVersionPlaceholders([[
+        'uuid' => 'b3c8f0d2-1111-4a2b-9c3d-000000000001',
+        'component_id' => 'pattern.' . self::PATTERN_ID,
+        'component_version' => '::ACTIVE_VERSION_IN_SUT::',
+        'inputs' => [],
+        'reference' => 'node:article:' . $node->uuid(),
+      ],
+      ]),
+    ]);
+    $page->save();
+    $node->delete();
+
+    NodeType::load('article')?->delete();
+
+    self::assertInstanceOf(Pattern::class, Pattern::load(self::PATTERN_ID));
+    $component = Component::load('pattern.' . self::PATTERN_ID);
+    self::assertInstanceOf(Component::class, $component);
+    self::assertTrue($component->status());
+    $page = Page::load($page->id());
+    self::assertInstanceOf(Page::class, $page);
+    $build = $page->getComponentTree()->toRenderable($page, FALSE);
+    $html = (string) $this->container->get(RendererInterface::class)->renderInIsolation($build);
+    // The reference is stale now (no fatal, shown as a problem in the popup),
+    // so the placement shows nothing rather than the wrong content.
+    self::assertStringNotContainsString('Oops, something went wrong', $html);
+    self::assertStringNotContainsString('Gone', $html);
+  }
+
+  /**
    * Deleting a linked field drops the links that use it, not the Pattern.
    */
   public function testDeletingALinkedFieldDropsOnlyItsLinks(): void {
@@ -296,6 +336,20 @@ final class PatternLinkValidationTest extends CanvasKernelTestBase {
         'href' => ['article' => ['sourceType' => 'host-entity-url', 'absolute' => TRUE]],
       ],
     ])->save();
+    $node = Node::create(['type' => 'article', 'title' => 'Real title', 'status' => 1]);
+    $node->save();
+    $page = Page::create([
+      'title' => 'Host page',
+      'components' => self::populateActiveComponentVersionPlaceholders([[
+        'uuid' => 'b3c8f0d2-1111-4a2b-9c3d-000000000001',
+        'component_id' => 'pattern.' . self::PATTERN_ID,
+        'component_version' => '::ACTIVE_VERSION_IN_SUT::',
+        'inputs' => [],
+        'reference' => 'node:article:' . $node->uuid(),
+      ],
+      ]),
+    ]);
+    $page->save();
 
     FieldConfig::loadByName('node', 'article', 'field_subtitle')?->delete();
 
@@ -312,6 +366,14 @@ final class PatternLinkValidationTest extends CanvasKernelTestBase {
     self::assertNotContains('field.field.node.article.field_subtitle', $pattern->getDependencies()['config'] ?? []);
     self::assertSame('Example heading', $pattern->getComponentTree()->getComponentTreeItemByUuid(self::HEADING)?->getInputs()['text'], 'The tree keeps the static value.');
     self::assertInstanceOf(Component::class, Component::load('pattern.' . self::PATTERN_ID), 'The Component is not deleted.');
+    $page = Page::load($page->id());
+    self::assertInstanceOf(Page::class, $page);
+    $build = $page->getComponentTree()->toRenderable($page, FALSE);
+    $html = (string) $this->container->get(RendererInterface::class)->renderInIsolation($build);
+    // The link that is left still reads the entity, the dropped one does not.
+    self::assertStringContainsString('Real title', $html);
+    self::assertStringContainsString('Example heading', $html);
+    self::assertStringNotContainsString('Oops, something went wrong', $html);
   }
 
   /**

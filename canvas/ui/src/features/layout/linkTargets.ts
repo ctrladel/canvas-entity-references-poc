@@ -441,6 +441,18 @@ export const componentsOf = (state: any): ComponentsList | undefined =>
     | ComponentsList
     | undefined;
 
+/**
+ * Whether a node is a placement of a Pattern: its content is chosen in the
+ * Settings tab, so it has no link control.
+ */
+export const isPatternPlacement = (
+  node: ComponentNode,
+  components: ComponentsList | undefined,
+): boolean => {
+  const [type] = node.type.split('@');
+  return components?.[type]?.patternMappedBundles !== undefined;
+};
+
 export const usesOwnReference = (
   node: ComponentNode,
   components: ComponentsList | undefined,

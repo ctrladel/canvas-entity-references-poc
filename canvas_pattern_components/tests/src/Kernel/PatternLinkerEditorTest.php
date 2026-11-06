@@ -6,12 +6,14 @@ namespace Drupal\Tests\canvas_pattern_components\Kernel;
 
 use Drupal\canvas\AutoSave\AutoSaveManager;
 use Drupal\canvas\Entity\Component;
+use Drupal\canvas\Entity\Page;
 use Drupal\canvas\Entity\Pattern;
 use Drupal\canvas_pattern_components\PatternLinks;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Extension\ThemeInstallerInterface;
 use Drupal\Core\Form\FormState;
 use Drupal\Core\Logger\RfcLogLevel;
+use Drupal\Core\Render\RendererInterface;
 use Drupal\Core\Url;
 use Drupal\field\Entity\FieldConfig;
 use Drupal\field\Entity\FieldStorageConfig;
@@ -223,6 +225,28 @@ final class PatternLinkerEditorTest extends ApiLayoutControllerTestBase {
 
   private function link(string $expression = self::TITLE_EXPRESSION): Response {
     return $this->patchText(['sourceType' => 'entity-field', 'expression' => $expression]);
+  }
+
+  /**
+   * Renders a page placement of the Pattern for the given article.
+   */
+  private function renderPlacement(Node $article): string {
+    $component = Component::load('pattern.' . self::PATTERN_ID);
+    self::assertInstanceOf(Component::class, $component);
+    $page = Page::create([
+      'title' => 'Host page',
+      'components' => [[
+        'uuid' => 'b3c8f0d2-1111-4a2b-9c3d-000000000001',
+        'component_id' => $component->id(),
+        'component_version' => $component->getActiveVersion(),
+        'inputs' => [],
+        'reference' => \sprintf('node:article:%s', $article->uuid()),
+      ],
+      ],
+    ]);
+    $page->save();
+    $build = $page->getComponentTree()->toRenderable($page, FALSE);
+    return (string) $this->container->get(RendererInterface::class)->renderInIsolation($build);
   }
 
   /**
@@ -446,6 +470,9 @@ final class PatternLinkerEditorTest extends ApiLayoutControllerTestBase {
     $stored = Pattern::load(self::PATTERN_ID);
     self::assertInstanceOf(Pattern::class, $stored);
     self::assertSame('https://example.com/', $stored->getComponentTree()->getComponentTreeItemByUuid(self::CTA_UUID)?->getInputs()['href']);
+    $html = $this->renderPlacement($article);
+    self::assertStringContainsString('href="' . $article->toUrl()->setAbsolute()->toString() . '"', $html);
+    self::assertStringContainsString('datetime="2023-11-14"', $html);
   }
 
   /**
@@ -456,11 +483,12 @@ final class PatternLinkerEditorTest extends ApiLayoutControllerTestBase {
    */
   public function testLinkThatBreaksThePropShapeIsRejected(): void {
     $this->createPatternWithCtaAndDate([]);
-    $this->createArticle('Shape');
+    $article = $this->createArticle('Shape');
     $patch = $this->patchProp(self::CTA_UUID, 'sdc.canvas_test_sdc.my-cta', 'href', ['sourceType' => 'host-entity-url', 'absolute' => FALSE]);
     $published = $patch->getStatusCode() === Response::HTTP_OK ? $this->makePublishAllRequest() : $patch;
     self::assertGreaterThanOrEqual(400, $published->getStatusCode(), 'Either the edit or the publish is refused.');
     self::assertSame([], $this->storedLinks());
+    self::assertStringNotContainsString('Oops, something went wrong', $this->renderPlacement($article));
   }
 
   /**
@@ -572,7 +600,7 @@ final class PatternLinkerEditorTest extends ApiLayoutControllerTestBase {
 
   public function testPublishContractsToStoredForm(): void {
     $pattern = $this->createPattern(links: []);
-    $this->createArticle('Published sample');
+    $article = $this->createArticle('Published sample');
     self::assertSame(Response::HTTP_OK, $this->link()->getStatusCode());
     self::assertSame(Response::HTTP_OK, $this->makePublishAllRequest()->getStatusCode());
 
@@ -582,11 +610,12 @@ final class PatternLinkerEditorTest extends ApiLayoutControllerTestBase {
     self::assertSame([self::UUID => ['text' => ['article' => self::TITLE_LINK]]], $stored->getThirdPartySetting('canvas_pattern_components', 'links'));
     self::assertCount(0, $stored->getTypedData()->validate());
     self::assertTrue($this->container->get(AutoSaveManager::class)->getAutoSaveEntity($pattern)->isEmpty());
+    self::assertStringContainsString('Published sample', $this->renderPlacement($article));
   }
 
   public function testUnlinkThenPublishRemovesLink(): void {
     $pattern = $this->createPattern();
-    $this->createArticle('Sample to unlink');
+    $article = $this->createArticle('Sample to unlink');
     // Opening and unlinking: the client sends the default static source.
     $this->patchText(['sourceType' => 'static:field_item:string', 'expression' => 'ℹ︎string␟value', 'value' => 'Example heading']);
     self::assertSame(Response::HTTP_OK, $this->makePublishAllRequest()->getStatusCode());
@@ -595,6 +624,9 @@ final class PatternLinkerEditorTest extends ApiLayoutControllerTestBase {
     self::assertInstanceOf(Pattern::class, $stored);
     self::assertEmpty($stored->getThirdPartySetting('canvas_pattern_components', 'links'));
     self::assertCount(0, $stored->getTypedData()->validate());
+    $html = $this->renderPlacement($article);
+    self::assertStringContainsString('Example heading', $html);
+    self::assertStringNotContainsString('Sample to unlink', $html);
     self::assertTrue($this->container->get(AutoSaveManager::class)->getAutoSaveEntity($pattern)->isEmpty());
   }
 
@@ -715,7 +747,7 @@ final class PatternLinkerEditorTest extends ApiLayoutControllerTestBase {
 
   public function testReferenceLinkRoundTrips(): void {
     $this->createPattern(links: []);
-    $this->createArticle('Authored sample');
+    $article = $this->createArticle('Authored sample');
     self::assertSame(Response::HTTP_OK, $this->link(self::AUTHOR_EXPRESSION)->getStatusCode());
     self::assertSame(Response::HTTP_OK, $this->makePublishAllRequest()->getStatusCode());
 
@@ -723,6 +755,9 @@ final class PatternLinkerEditorTest extends ApiLayoutControllerTestBase {
     self::assertInstanceOf(Pattern::class, $stored);
     self::assertSame([self::UUID => ['text' => ['article' => self::AUTHOR_LINK]]], $stored->getThirdPartySetting('canvas_pattern_components', 'links'));
     self::assertSame('Example heading', self::textInput($stored));
+    // The article's author is the anonymous user, so no name renders; the
+    // heading must still render without error.
+    self::assertStringNotContainsString('Example heading', $this->renderPlacement($article));
   }
 
   /**

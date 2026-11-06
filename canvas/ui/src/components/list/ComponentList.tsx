@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from 'react';
 import { useErrorBoundary } from 'react-error-boundary';
+import { useParams } from 'react-router';
 import { skipToken } from '@reduxjs/toolkit/query';
 
 import ListItem from '@/components/list/ListItem';
@@ -45,16 +46,21 @@ const ComponentList = ({ searchTerm, visibility }: ComponentListProps) => {
   // placeholders managed by Canvas: they are never offered in the library.
   // Memoized: a fresh object on every render would remount the whole list on
   // unrelated re-renders, dropping in-flight clicks on its menu items.
+  // A Pattern is not offered in its own editor: it cannot be placed inside
+  // itself.
+  const { patternId } = useParams();
   const components = useMemo(
     () =>
       allComponents
         ? Object.fromEntries(
             Object.entries(allComponents).filter(
-              ([id]) => !isMarkerComponentType(id),
+              ([id]) =>
+                !isMarkerComponentType(id) &&
+                !(patternId && id === `pattern.${patternId}`),
             ),
           )
         : allComponents,
-    [allComponents],
+    [allComponents, patternId],
   );
   const {
     data: folders,

@@ -47,6 +47,10 @@ interface BaseComponent {
   // `entity_type_id:bundle` of each bundle that fits: the component uses the
   // entity of its own reference, and only an entity of one of them fits.
   ownReferenceRequirement?: string[];
+  // Only on a Pattern: `entity_type_id:bundle` of each bound bundle that has a
+  // link or a reference. Empty when the Pattern is unbound or nothing is
+  // mapped, and absent on anything that is not a Pattern.
+  patternMappedBundles?: string[];
   metadata?: { [key: string]: any };
 }
 

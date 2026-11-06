@@ -18,9 +18,11 @@ import PageDataForm from '@/components/PageDataForm';
 import ComponentReference from '@/components/panel/ComponentReference';
 import LinksForSelector from '@/components/panel/LinksForSelector';
 import PatternBinding from '@/components/panel/PatternBinding';
+import PlacementContent from '@/components/panel/PlacementContent';
 import { setCurrentComponent } from '@/features/form/formStateSlice';
 import { selectLayout } from '@/features/layout/layoutModelSlice';
 import { findComponentByUuid } from '@/features/layout/layoutUtils';
+import { isPatternPlacement } from '@/features/layout/linkTargets';
 import {
   EditorFrameContext,
   selectEditorFrameContext,
@@ -29,6 +31,7 @@ import {
   selectSelection,
 } from '@/features/ui/uiSlice';
 import useHidePanelClasses from '@/hooks/useHidePanelClasses';
+import { useGetComponentsQuery } from '@/services/componentAndLayout';
 import {
   isMarkerComponentType,
   PAGE_VARIANT_ENTITY_TYPE,
@@ -63,8 +66,15 @@ const ContextualPanel: React.FC = () => {
     selectedComponent && !isMultiSelect
       ? findComponentByUuid(layout, selectedComponent)
       : null;
+  const { data: components } = useGetComponentsQuery();
+  // A placement of a Pattern has its content chosen in the Settings tab, not
+  // with the link control.
+  const isPlacement =
+    selectedNode !== null && isPatternPlacement(selectedNode, components);
   const canLinkSelection =
-    selectedNode !== null && !isMarkerComponentType(selectedNode.type);
+    selectedNode !== null &&
+    !isMarkerComponentType(selectedNode.type) &&
+    !isPlacement;
   const mainTabText = isTemplateContext ? 'Template data' : 'Page data';
 
   const [activePanel, setActivePanel] = useState('pageData');
@@ -218,6 +228,14 @@ const ContextualPanel: React.FC = () => {
                           </Callout.Root>
                         )}
                       </Flex>
+                    </Box>
+                  )}
+                  {isPlacement && selectedComponent && (
+                    <Box mt="3">
+                      <PlacementContent
+                        key={selectedComponent}
+                        uuid={selectedComponent}
+                      />
                     </Box>
                   )}
                   {isPatternContext && selectedComponent && !isMultiSelect && (

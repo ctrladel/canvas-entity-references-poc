@@ -15,12 +15,14 @@ import {
  */
 const useSyncCollapsedLayersLocalStorage = () => {
   const dispatch = useAppDispatch();
-  const { entityType, entityId } = useParams();
+  const { entityType, entityId, patternId } = useParams();
   const model = useAppSelector(selectModel);
   const collapsedLayers = useAppSelector(selectCollapsedLayers);
   const isInitialized = useRef(false);
   // Key the storage by edited entity
-  const key = `Canvas.collapsedLayers.${entityType}.${entityId}`;
+  const key = patternId
+    ? `Canvas.collapsedLayers.pattern.${patternId}`
+    : `Canvas.collapsedLayers.${entityType}.${entityId}`;
 
   // Initialize Redux state from local storage - run only once on component mount
   useEffect(() => {
