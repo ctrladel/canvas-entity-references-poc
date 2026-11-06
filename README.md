@@ -1,5 +1,7 @@
 # Canvas entity references for SDCs: a proof of concept
 
+> AI-Generated: Yes. I used Claude Code to draft this document and most of the code it describes. I directed the design and reviewed the result.
+
 I built a proof of concept that lets SDCs in Canvas show entity data without changing SDC files. Any component can reference an entity and have its props linked to that entity's fields, and site builders can map a Pattern once so editors only place it and pick an entity.
 
 These PRs aren't merge candidates. The goal is to explore this approach and whether it's viable. I don't expect anyone to understand all of the code. Look and poke where it matters to you, and tell me if you see any significant architectural objections.

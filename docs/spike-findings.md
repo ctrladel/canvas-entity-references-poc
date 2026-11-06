@@ -1,5 +1,7 @@
 # Entity references for SDCs in Canvas: findings
 
+> AI-Generated: Yes. I used Claude Code to draft this document and most of the code it describes. I directed the design and reviewed the result.
+
 What I found building the proof of concept, by piece. The code is in four stacked PRs ([README](../README.md)). The alternatives and the discussion are in [sdc-entity-references-options.md](sdc-entity-references-options.md).
 
 ## Verdict

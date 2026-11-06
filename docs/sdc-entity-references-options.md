@@ -1,5 +1,7 @@
 # Entity references for SDCs in Canvas: requirements, opinions and options
 
+> AI-Generated: Yes. I used Claude Code to draft this document and most of the code it describes. I directed the design and reviewed the result.
+
 This summarizes the discussion on [#3585135](https://git.drupalcode.org/project/canvas/-/work_items/3585135) and [#3573831](https://git.drupalcode.org/project/canvas/-/work_items/3573831), compares the possible approaches, and shares results from a spike. Corrections are welcome if I've misrepresented anyone's position.
 
 ## Short version
