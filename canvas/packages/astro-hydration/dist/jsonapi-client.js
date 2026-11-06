@@ -1,0 +1,1 @@
+import{r as e}from"./jsonapi-client-BsKWO0JX.js";export{e as JsonApiClient};

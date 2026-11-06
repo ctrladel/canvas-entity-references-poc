@@ -12,6 +12,7 @@ use Drupal\Component\Plugin\DerivativeInspectionInterface;
 use Drupal\Component\Plugin\PluginInspectionInterface;
 use Drupal\Core\Entity\EntityInterface;
 use Drupal\Core\Entity\FieldableEntityInterface;
+use Drupal\Core\Entity\TypedData\EntityDataDefinitionInterface;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Plugin\ContextAwarePluginInterface;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
@@ -325,11 +326,45 @@ interface ComponentSourceInterface extends PluginInspectionInterface, Derivative
    *   Component instance UUID.
    * @param \Drupal\Core\Entity\FieldableEntityInterface|null $entity
    *   Host entity.
+   * @param bool $covered_by_reference
+   *   Whether a component tree reference covers the instance, so the host
+   *   entity is NULL because its linked props are checked against the
+   *   reference, not because there is no host. Only then are the other props
+   *   validated without a host.
    *
    * @return \Symfony\Component\Validator\ConstraintViolationListInterface
    *   Any violations.
    */
-  public function validateComponentInput(array $inputValues, string $component_instance_uuid, ?FieldableEntityInterface $entity): ConstraintViolationListInterface;
+  public function validateComponentInput(array $inputValues, string $component_instance_uuid, ?FieldableEntityInterface $entity, bool $covered_by_reference = FALSE): ConstraintViolationListInterface;
+
+  /**
+   * Gets what a reference held by an instance of this source itself must be.
+   *
+   * Most sources take no reference of their own for themselves: a reference on
+   * an instance is what its linked props, and those of the components in its
+   * slots, read from. A source that returns a definition here instead uses the
+   * entity of the instance's own reference, and only an entity of that type and
+   * bundle fits. A tree that holds another is invalid, and the client offers
+   * only what fits. An instance never uses a reference from an ancestor.
+   *
+   * @return \Drupal\Core\Entity\TypedData\EntityDataDefinitionInterface|null
+   *   NULL when the source has no such requirement. Otherwise the type, and
+   *   the bundle in case it has one.
+   */
+  public function getOwnReferenceRequirement(): ?EntityDataDefinitionInterface;
+
+  /**
+   * Whether an instance of this source takes no reference of its own.
+   *
+   * A source that uses the entity of its own reference but has none to offer
+   * says so here: a reference
+   * that is new or changed on such an instance is refused, because it would do
+   * nothing. One that is as it was stored is kept, so a page can still be saved.
+   *
+   * @return bool
+   *   TRUE when a new or changed reference on an instance is refused.
+   */
+  public function refusesOwnReference(): bool;
 
   /**
    * Checks if component meets requirements.

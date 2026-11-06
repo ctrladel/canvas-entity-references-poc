@@ -116,7 +116,7 @@ abstract class JsonSchemaPropsComponentSourceBaseTestBase extends ComponentSourc
     // TRICKY: EntityFieldPropSources can only be used in ContentTemplates and hence
     // no host entity is known, which in turn causes the detailed validation for
     // it to be skipped thanks to MissingHostEntityException
-    // being thrown.
+    // being thrown. The other props are still validated.
     // @see \Drupal\canvas\Plugin\Validation\Constraint\ValidComponentTreeItemConstraintValidator::validate()
     self::assertCount(0, $source->validateComponentInput(
       [
@@ -124,7 +124,9 @@ abstract class JsonSchemaPropsComponentSourceBaseTestBase extends ComponentSourc
           'sourceType' => PropSource::EntityField->value,
           'expression' => 'ℹ︎␜entity:user␝user_picture␞␟{src↠src_with_alternate_widths,alt↠alt,width↠width,height↠height}',
         ],
-      ] + $resolved,
+      // Valid values for the required props: without a host only the
+      // link-sourced prop is left out of validation, not the other props.
+      ] + $source->getDefaultExplicitInput(only_required: TRUE),
       $this->randomString(),
       NULL,
     ));

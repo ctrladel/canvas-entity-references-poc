@@ -6,6 +6,9 @@ namespace Drupal\canvas\Form;
 
 use Drupal\canvas\ComponentSource\ComponentSourceInterface;
 use Drupal\canvas\ComponentSource\ComponentSourceManager;
+use Drupal\canvas\ComponentTreeLinkGuard;
+use Drupal\canvas\ComponentTreeReference;
+use Drupal\canvas\ComponentTreeReferenceTargets;
 use Drupal\canvas\Entity\Component;
 use Drupal\canvas\Entity\ComponentInterface;
 use Drupal\canvas\Entity\ContentTemplate;
@@ -14,14 +17,17 @@ use Drupal\canvas\Entity\PageVariant;
 use Drupal\canvas\Entity\Pattern;
 use Drupal\canvas\Plugin\Canvas\ComponentSource\Fallback;
 use Drupal\canvas\Plugin\Canvas\ComponentSource\JsonSchemaPropsComponentSourceBase;
+use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItem;
 use Drupal\canvas\Storage\ComponentTreeLoader;
 use Drupal\Core\Entity\EntityInterface;
 use Drupal\Core\Entity\FieldableEntityInterface;
+use Drupal\Core\Entity\TypedData\EntityDataDefinition;
 use Drupal\Core\EventSubscriber\AjaxResponseSubscriber;
 use Drupal\Core\Extension\ThemeHandlerInterface;
 use Drupal\Core\Form\FormBase;
 use Drupal\Core\Form\FormStateInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
+use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
 /**
  * Allows editing a component instance.
@@ -32,12 +38,19 @@ final class ComponentInstanceForm extends FormBase {
 
   public const FORM_ID = 'component_instance_form';
 
+  /**
+   * The value of form_canvas_link_target for "covered, but nothing to link to".
+   */
+  public const NO_LINK_TARGET = 'none';
+
   public function __construct(
     // These must be protected so that DependencySerializationTrait, which is
     // used by the parent class, can access it.
     protected ComponentTreeLoader $componentTreeLoader,
     protected ThemeHandlerInterface $themeHandler,
     protected ComponentSourceManager $componentSourceManager,
+    protected ComponentTreeReferenceTargets $referenceTargets,
+    protected ComponentTreeLinkGuard $linkGuard,
   ) {}
 
   /**
@@ -53,6 +66,8 @@ final class ComponentInstanceForm extends FormBase {
       $component_tree_loader,
       $container->get(ThemeHandlerInterface::class),
       $component_source_manager,
+      $container->get(ComponentTreeReferenceTargets::class),
+      $container->get(ComponentTreeLinkGuard::class),
     );
   }
 
@@ -94,6 +109,33 @@ final class ComponentInstanceForm extends FormBase {
     };
 
     $request = $this->getRequest();
+    // On a page, the client sends the `entity_type_id:bundle` of the nearest
+    // reference above the instance. The instance may not be saved yet, so only
+    // this is known; the form needs field metadata of the target, not an entity.
+    // The server doesn't trust it beyond that: it must be a target that may be
+    // referenced.
+    $link_target_param = $request->request->getString('form_canvas_link_target');
+    // `none`: a reference covers the instance but cannot be followed (a field
+    // that is gone). There is nothing to link to, so no linker is offered, not
+    // even on a content template, where the host entity would otherwise serve.
+    // So is a target that can't be referenced: the client sends the type and
+    // bundle of a picked reference as written, and a deleted content type is
+    // none that can be. The reference still covers, so the form must not fall
+    // back to the host either.
+    $allowed = $this->referenceTargets->isAllowed($link_target_param);
+    $nothing_to_link_to = $link_target_param === self::NO_LINK_TARGET || ($link_target_param !== '' && !$allowed);
+    $link_target_param = $allowed ? $link_target_param : '';
+    if ($nothing_to_link_to) {
+      $form_state->set('canvas_may_link', FALSE);
+    }
+    if ($link_target_param !== '') {
+      [$link_type, $link_bundle] = \explode(':', $link_target_param);
+      $form_state->set('canvas_link_target', EntityDataDefinition::create($link_type, $link_bundle));
+      // Without the permission, links that exist are shown but not offered or
+      // changed.
+      $form_state->set('canvas_may_link', $this->linkGuard->mayLink($this->currentUser()));
+      $host_entity = ComponentTreeReference::createStandIn($link_type, $link_bundle);
+    }
     $tree = $request->request->getString('form_canvas_tree');
     [$component_id, $version] = \explode('@', \json_decode($tree, TRUE)['type']);
     if (empty($version)) {
@@ -130,6 +172,16 @@ final class ComponentInstanceForm extends FormBase {
       '#type' => 'hidden',
       '#value' => $props,
     ];
+    if ($link_target_param !== '' || $nothing_to_link_to) {
+      $form['form_canvas_link_target'] = ['#type' => 'hidden', '#value' => $nothing_to_link_to ? self::NO_LINK_TARGET : $link_target_param];
+    }
+
+    // Whether a reference is above the component, for those who need to know
+    // that a field is not read from the host. Sent again like the target.
+    $reference_above = $request->request->getString('form_canvas_reference_above');
+    if (\preg_match(ComponentTreeReference::STORED_PATTERN, $reference_above) === 1) {
+      $form['form_canvas_reference_above'] = ['#type' => 'hidden', '#value' => $reference_above];
+    }
 
     // Prevent form submission while specifying values for component instance's
     // inputs, because changes are saved via Redux instead of a traditional
@@ -141,7 +193,30 @@ final class ComponentInstanceForm extends FormBase {
     $parents = ['canvas_component_props', $component_instance_uuid];
     $sub_form = ['#parents' => $parents, '#tree' => TRUE];
     if (!$component->getComponentSource()->isBroken()) {
-      $inputs = $component->getComponentSource()->clientModelToInput($component_instance_uuid, $component, $client_model, $host_entity);
+      // Nothing can read a link under a reference that can't be followed, so
+      // the links are out of the conversion. They are shown as they are stored.
+      $kept_links = [];
+      if ($nothing_to_link_to) {
+        foreach ((array) ($client_model['source'] ?? []) as $prop => $source) {
+          if (\is_array($source) && \in_array($source['sourceType'] ?? NULL, ComponentTreeItem::LINK_SOURCE_TYPES, TRUE)) {
+            $kept_links[$prop] = $source;
+            unset($client_model['source'][$prop], $client_model['resolved'][$prop]);
+          }
+        }
+      }
+      try {
+        $inputs = $component->getComponentSource()->clientModelToInput($component_instance_uuid, $component, $client_model, $host_entity);
+        $inputs = \is_array($inputs) ? $kept_links + $inputs : $inputs;
+      }
+      catch (\DomainException $e) {
+        // Only a link target the client chose can be wrong here: the model holds
+        // a link that the target the client sent can't serve. A content template
+        // has no such choice, and keeps its exception.
+        if ($link_target_param === '') {
+          throw $e;
+        }
+        throw new ConflictHttpException($e->getMessage(), $e);
+      }
       $instance_form = $component->getComponentSource()->buildComponentInstanceForm($sub_form, $form_state, $component, $component_instance_uuid, $inputs, $entity, $component->get('settings'));
     }
     else {

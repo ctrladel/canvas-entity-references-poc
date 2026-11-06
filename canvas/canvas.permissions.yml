@@ -51,3 +51,10 @@ delete canvas_page:
 publish auto-saves:
   title: 'Publish Drupal Canvas Content'
   description: 'Update entities with auto-saved changes in Drupal Canvas (requires "update" access for those entities).'
+
+# Linking props to content on a page: a reference on a component instance, and
+# the linked props under it. Enforced when a layout is saved or published.
+# @see \Drupal\canvas\ComponentTreeLinkGuard::PERMISSION
+link component props to content:
+  title: 'Link component props to content'
+  description: 'Choose the content a component on a page links to, and link its props, and those of components in its slots, to fields of that content.'

@@ -243,6 +243,7 @@ final class CanvasControllerTest extends CanvasKernelTestBase {
           'publishChanges' => FALSE,
           'folders' => FALSE,
           'configureLanguages' => FALSE,
+          'linkComponentProps' => FALSE,
         ],
       ],
       [
@@ -260,6 +261,7 @@ final class CanvasControllerTest extends CanvasKernelTestBase {
           'publishChanges' => TRUE,
           'folders' => FALSE,
           'configureLanguages' => FALSE,
+          'linkComponentProps' => FALSE,
         ],
       ],
       [
@@ -277,6 +279,7 @@ final class CanvasControllerTest extends CanvasKernelTestBase {
           'publishChanges' => FALSE,
           'folders' => FALSE,
           'configureLanguages' => FALSE,
+          'linkComponentProps' => FALSE,
         ],
       ],
       [
@@ -295,6 +298,7 @@ final class CanvasControllerTest extends CanvasKernelTestBase {
           'publishChanges' => FALSE,
           'folders' => FALSE,
           'configureLanguages' => FALSE,
+          'linkComponentProps' => FALSE,
         ],
       ],
       [
@@ -317,6 +321,7 @@ final class CanvasControllerTest extends CanvasKernelTestBase {
           'publishChanges' => TRUE,
           'folders' => TRUE,
           'configureLanguages' => TRUE,
+          'linkComponentProps' => FALSE,
         ],
       ],
     ];

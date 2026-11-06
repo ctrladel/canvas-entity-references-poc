@@ -435,6 +435,7 @@ final class JsComponent extends JsonSchemaPropsComponentSourceBase implements Ur
    * {@inheritdoc}
    */
   public function renderComponent(array $inputs, array $slot_definitions, string $componentUuid, bool $isPreview = FALSE): array {
+    $this->logLinkFallbacks($inputs, $componentUuid, $isPreview);
     $component = $this->getJavaScriptComponent();
     $headless_settings = NULL;
 
@@ -461,6 +462,7 @@ final class JsComponent extends JsonSchemaPropsComponentSourceBase implements Ur
             $component->getProps() ?? [],
           ),
           $prop_schemas,
+          $inputs[self::OMITTED_CACHEABILITY] ?? NULL,
         );
         $build = [
           '#markup' => '',
@@ -555,7 +557,7 @@ final class JsComponent extends JsonSchemaPropsComponentSourceBase implements Ur
 
     $valid_props = $component->getProps() ?? [];
 
-    [$props, $props_bubbleable_metadata] = self::getResolvedPropsAndBubbleableMetadata(\array_intersect_key($inputs[self::EXPLICIT_INPUT_NAME] ?? [], $valid_props), $prop_schemas);
+    [$props, $props_bubbleable_metadata] = self::getResolvedPropsAndBubbleableMetadata(\array_intersect_key($inputs[self::EXPLICIT_INPUT_NAME] ?? [], $valid_props), $prop_schemas, $inputs[self::OMITTED_CACHEABILITY] ?? NULL);
 
     // Explicit inputs for required props for both the auto-saved version and
     // the live versions, including cacheability and attachments.

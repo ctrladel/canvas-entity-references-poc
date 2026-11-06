@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\canvas\Plugin\Validation\Constraint;
 
+use Drupal\canvas\ComponentTreeReference;
 use Drupal\canvas\InvalidComponentInputsPropSourceException;
 use Drupal\canvas\MissingComponentInputsException;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItem;
@@ -43,10 +44,15 @@ final class ValidComponentTreeItemConstraintValidator extends ConstraintValidato
     // Validate in-depth. This is simpler if the ComponentTreeItem-provided
     // infrastructure is available, so conjure one from $value if not already.
     $fieldable_host_entity = NULL;
+    $covered_by_reference = NULL;
     if (!$value instanceof ComponentTreeItem) {
       \assert(\array_key_exists('uuid', $value));
       \assert(\array_key_exists('component_id', $value));
       \assert(\array_key_exists('inputs', $value));
+      // A conjured item sees none of the tree it is in: ask the tree whether a
+      // reference covers it.
+      $siblings = $this->context->getObject()?->getParent()?->getValue();
+      $covered_by_reference = \is_array($siblings) && isset($value['uuid']) && (ComponentTreeReference::nearestInItems(\array_values($siblings))[$value['uuid']] ?? NULL) !== NULL;
       $value = $this->conjureFieldItemObject($value);
     }
     else {
@@ -56,6 +62,8 @@ final class ValidComponentTreeItemConstraintValidator extends ConstraintValidato
         \assert($fieldable_host_entity instanceof FieldableEntityInterface);
       }
     }
+
+    $covered_by_reference ??= $value->isCoveredByReference();
 
     // Validate the prop source resolves into a value that is considered
     // valid by the source plugin.
@@ -94,7 +102,10 @@ final class ValidComponentTreeItemConstraintValidator extends ConstraintValidato
       $component_source->validateComponentInput(
         inputValues: $stored_explicit_input,
         component_instance_uuid: $value->getUuid(),
-        entity: $fieldable_host_entity,
+        // Linked props under a reference can't be evaluated against the tree's
+        // host; they are checked against the reference instead.
+        entity: $covered_by_reference ? NULL : $fieldable_host_entity,
+        covered_by_reference: $covered_by_reference,
       ),
       // We need to ensure the validation root context is transferred over.
       $this->context->getRoot()

@@ -378,6 +378,17 @@ final class Component extends VersionedConfigEntityBase implements ComponentInte
       $info = ['broken' => TRUE];
     }
 
+    // A component that uses the entity of its own reference says which: the
+    // client then offers only what fits.
+    $requirement = $this->getComponentSource()->getOwnReferenceRequirement();
+    if ($requirement !== NULL) {
+      // One `entity_type_id:bundle` for each bundle that fits.
+      $info['ownReferenceRequirement'] = \array_map(
+        static fn (string $bundle): string => $requirement->getEntityTypeId() . ':' . $bundle,
+        $requirement->getBundles() ?: [$requirement->getEntityTypeId()],
+      );
+    }
+
     return ClientSideRepresentation::create(
       values: $info + [
         'id' => $this->id(),

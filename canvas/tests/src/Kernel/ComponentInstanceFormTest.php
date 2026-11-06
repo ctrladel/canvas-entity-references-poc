@@ -422,6 +422,70 @@ final class ComponentInstanceFormTest extends ApiLayoutControllerTestBase {
   }
 
   /**
+   * Under a reference that cannot be followed, no linker is offered.
+   *
+   * A content template falls back to its own entity when the client sends no
+   * link target. When the nearest reference is a field that is gone, that
+   * would offer links to the template's content for props the reference
+   * covers. The client sends `none` instead.
+   *
+   * @see \Drupal\canvas\Form\ComponentInstanceForm::NO_LINK_TARGET
+   */
+  public function testNoLinkerUnderAReferenceThatCannotBeFollowed(): void {
+    $node = $this->createNode(['type' => 'article', 'title' => 'Test node']);
+    $node->save();
+    $template = ContentTemplate::create([
+      'content_entity_type_id' => 'node',
+      'content_entity_type_bundle' => 'article',
+      'content_entity_type_view_mode' => 'full',
+      'component_tree' => [],
+    ]);
+    $template->save();
+    $component_id = 'sdc.canvas_test_sdc.my-hero';
+    $this->setUpCurrentUser(permissions: ['administer content templates', 'edit any article content']);
+    $component_entity = Component::load($component_id);
+    \assert($component_entity instanceof ComponentInterface);
+    $form_canvas_props = $this->getFormCanvasPropsForComponent($component_id);
+    $form_url = Url::fromRoute('canvas.api.form.component_instance.content_template', [
+      'entity' => $template->id(),
+      'preview_entity' => $node->id(),
+    ])->toString();
+
+    // The linker is offered on a template when the client says nothing.
+    $this->container->get('kernel')->rebuildContainer();
+    $html = $this->formHtmlForRequest($form_url, $component_entity, $form_canvas_props);
+    self::assertStringContainsString('prop_link_data', $html);
+    self::assertStringNotContainsString('form_canvas_link_target', $html);
+
+    // Not when told there is nothing to link to. The value is sent again with
+    // later requests of the form.
+    $this->container->get('kernel')->rebuildContainer();
+    $html = $this->formHtmlForRequest($form_url, $component_entity, $form_canvas_props, ['form_canvas_link_target' => ComponentInstanceForm::NO_LINK_TARGET]);
+    self::assertStringNotContainsString('prop_link_data', $html);
+    self::assertStringContainsString('form_canvas_link_target', $html);
+    self::assertStringContainsString('&quot;#value&quot;:&quot;none&quot;', $html);
+  }
+
+  /**
+   * @param array<string, mixed> $form_canvas_props
+   * @param array<string, string> $extra
+   */
+  private function formHtmlForRequest(string $form_url, ComponentInterface $component_entity, array $form_canvas_props, array $extra = []): string {
+    $json = self::decodeResponse($this->request(Request::create($form_url, 'PATCH', [
+      'form_canvas_tree' => json_encode([
+        'nodeType' => 'component',
+        'slots' => [],
+        'type' => "{$component_entity->id()}@{$component_entity->getActiveVersion()}",
+        'uuid' => '5f18db31-fa2f-4f4e-a377-dc0c6a0b7dc4',
+      ], JSON_THROW_ON_ERROR),
+      'form_canvas_props' => json_encode($form_canvas_props, JSON_THROW_ON_ERROR),
+      'form_canvas_selected' => '5f18db31-fa2f-4f4e-a377-dc0c6a0b7dc4',
+    ] + $extra)));
+    self::assertArrayHasKey('html', $json);
+    return $json['html'];
+  }
+
+  /**
    * Tests additional edge cases of the impact of broken components.
    *
    * @see \Drupal\Tests\canvas\Kernel\Plugin\Canvas\ComponentSource\JsComponentTest::testIsBroken())

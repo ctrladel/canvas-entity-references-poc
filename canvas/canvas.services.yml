@@ -94,6 +94,8 @@ services:
     tags:
       - { name: cache.bin.memory }
   Drupal\canvas\Storage\ComponentTreeLoader: {}
+  Drupal\canvas\ComponentTreeReferenceTargets: {}
+  Drupal\canvas\ComponentTreeLinkGuard: {}
   Drupal\canvas\CodeComponentDataProvider: {}
   Drupal\canvas\Version: {}
   Drupal\canvas\CanvasConfigUpdater: ~
@@ -228,6 +230,7 @@ services:
   Drupal\canvas\Controller\ApiExtensionControllers: ~
   Drupal\canvas\Controller\ApiLayoutController: {}
   Drupal\canvas\Controller\ApiLogController: {}
+  Drupal\canvas\Controller\ApiTreeReferenceController: {}
   Drupal\canvas\Controller\ApiContentControllers: {}
   Drupal\canvas\Controller\ApiMediaControllers: {}
   Drupal\canvas\Controller\ApiStagedConfigUpdateAutoSaveController: {}

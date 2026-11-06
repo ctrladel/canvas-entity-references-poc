@@ -20,4 +20,13 @@ class ComponentTreeStructureConstraint extends SymfonyConstraint {
   public const string PLUGIN_ID = 'ComponentTreeStructure';
   public string $basePropertyPath = '';
 
+  /**
+   * The stored tree this one replaces, when it is not read from an entity.
+   *
+   * References that are as they were in it are not checked again.
+   *
+   * @var array<int, array<string, mixed>>
+   */
+  public array $previousItems = [];
+
 }

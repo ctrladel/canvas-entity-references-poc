@@ -194,7 +194,13 @@ final readonly class TypedDataHelper {
 
       $children = \iterator_to_array($element);
 
-      return \array_map(fn ($child) => self::castRawPhpTypes($child), $children);
+      $result = \array_map(fn ($child) => self::castRawPhpTypes($child), $children);
+      // An unset tree reference must not change the hash of any item, so that
+      // adding the column leaves every existing draft's hash as it was.
+      if ($element instanceof ComponentTreeItem && \array_key_exists('reference', $result) && $result['reference'] === NULL) {
+        unset($result['reference']);
+      }
+      return $result;
     }
     // Anything that is neither a primitive nor traversable (e.g. an `ignore`
     // element) has no canonical config-schema type; use its value verbatim.

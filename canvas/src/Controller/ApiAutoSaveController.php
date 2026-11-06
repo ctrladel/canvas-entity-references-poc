@@ -6,6 +6,7 @@ namespace Drupal\canvas\Controller;
 
 use Drupal\canvas\AutoSave\AutoSaveManager;
 use Drupal\canvas\ComponentSource\ComponentSourceManager;
+use Drupal\canvas\ComponentTreeLinkGuard;
 use Drupal\canvas\ContentTranslation\SymmetricalTranslationSynchronizationTrait;
 use Drupal\canvas\Entity\AssetLibrary;
 use Drupal\canvas\Entity\AutoSavePublishAwareInterface;
@@ -76,6 +77,7 @@ final class ApiAutoSaveController extends ApiControllerBase {
     private readonly AccountInterface $currentUser,
     private readonly ComponentSourceManager $componentSourceManager,
     private readonly ComponentTreeLoader $componentTreeLoader,
+    private readonly ComponentTreeLinkGuard $linkGuard,
     private readonly ModuleHandlerInterface $moduleHandler,
     // The synchronizer belongs to content_translation, an optional dependency,
     // so it is NULL when that module is not installed.
@@ -467,6 +469,7 @@ final class ApiAutoSaveController extends ApiControllerBase {
       // undone by rolling back the database transaction, such as sending
       // emails.
       $violations = $this->getConflictAwareContentEntityViolations($entity, $conflict_detection_dev_mode);
+      $this->addUnauthorizedLinkViolations($entity, $violations);
       $form_violations = $this->autoSaveManager->getEntityFormViolations($entity);
       foreach ($form_violations as $form_violation) {
         // Add any form violations at this point.
@@ -688,6 +691,32 @@ final class ApiAutoSaveController extends ApiControllerBase {
     ));
 
     return $filtered;
+  }
+
+  /**
+   * Adds a violation for each reference or link the publisher may not change.
+   *
+   * What is published is compared with what is stored now. A draft made by
+   * someone who may link can't be published by someone who may not, unless the
+   * links are as they are.
+   */
+  private function addUnauthorizedLinkViolations(ContentEntityInterface $entity, ConstraintViolationListInterface $violations): void {
+    if ($this->linkGuard->mayLink($this->currentUser)) {
+      return;
+    }
+    $stored = $entity->isNew() ? NULL : $this->entityTypeManager->getStorage($entity->getEntityTypeId())->loadUnchanged($entity->id());
+    $draft_tree = $this->componentTreeLoader->load($entity);
+    $before = $stored instanceof ContentEntityInterface ? $this->componentTreeLoader->load($stored)->getValue() : [];
+    foreach ($this->linkGuard->getChangedInstances($before, $draft_tree->getValue()) as $uuid) {
+      $violations->add(new ConstraintViolation(
+        \sprintf("The '%s' permission is required to add, change or remove a link to content.", ComponentTreeLinkGuard::PERMISSION),
+        NULL,
+        [],
+        $entity,
+        \sprintf('%s.%d.inputs', $draft_tree->getName(), $draft_tree->getComponentTreeDeltaByUuid($uuid)),
+        NULL,
+      ));
+    }
   }
 
   public static function getViolationSetsFromPropertyPathsAndRoot(

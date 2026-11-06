@@ -6,6 +6,7 @@ namespace Drupal\canvas\Controller;
 
 use Drupal\canvas\AutoSave\AutoSaveManager;
 use Drupal\canvas\CanvasUriDefinitions;
+use Drupal\canvas\ComponentTreeLinkGuard;
 use Drupal\canvas\Config\ThemeSettingsDiscovery;
 use Drupal\canvas\Entity\BrandKit;
 use Drupal\canvas\Entity\ComponentTreeEntityInterface;
@@ -243,6 +244,7 @@ HTML;
               'publishChanges' => $this->currentUser->hasPermission(AutoSaveManager::PUBLISH_PERMISSION),
               'folders' => $this->currentUser->hasPermission(Folder::ADMIN_PERMISSION),
               'configureLanguages' => $this->currentUser->hasPermission('administer languages'),
+              'linkComponentProps' => $this->currentUser->hasPermission(ComponentTreeLinkGuard::PERMISSION),
             ],
             'contentEntityCreateOperations' => $content_entity_create_operations,
             'homepagePath' => $system_site_config->get('page.front'),

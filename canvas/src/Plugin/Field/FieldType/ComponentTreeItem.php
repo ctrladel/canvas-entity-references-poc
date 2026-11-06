@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Drupal\canvas\Plugin\Field\FieldType;
 
+use Drupal\canvas\ComponentTreeFieldReference;
+use Drupal\canvas\ComponentTreeReference;
 use Drupal\canvas\Entity\Component;
 use Drupal\canvas\Entity\ComponentInterface;
 use Drupal\canvas\Entity\ComponentTreeEntityInterface;
@@ -42,7 +44,7 @@ use Symfony\Component\Validator\ConstraintViolationList;
  *
  * @phpstan-import-type ComponentConfigEntityId from \Drupal\canvas\Entity\Component
  * @phpstan-import-type ConfigDependenciesArray from \Drupal\canvas\Entity\VersionedConfigEntityInterface
- * @phpstan-type ComponentTreeItemPropName 'uuid'|'inputs'|'inputs_resolved'|'component_id'|'component'|'parent_item'|'slot'|'parent_uuid'|'label'|'component_version'
+ * @phpstan-type ComponentTreeItemPropName 'uuid'|'inputs'|'inputs_resolved'|'component_id'|'component'|'parent_item'|'slot'|'parent_uuid'|'label'|'component_version'|'reference'
  *
  * @property \Drupal\canvas\HydratedTree $hydrated
  */
@@ -64,7 +66,11 @@ use Symfony\Component\Validator\ConstraintViolationList;
       // Only StaticPropSources may be used, because using
       // EntityFieldPropSources or HostEntityUrlPropSources is a decision that
       // should be made at the Content Template level by a Site Builder, not by
-      // each Content Creator.
+      // each Content Creator. The exception is a component instance that a
+      // reference covers: its own, or an ancestor's. Choosing the entity it
+      // links to is a separate permission, so the decision stays with someone
+      // who may make it.
+      // @see \Drupal\canvas\ComponentTreeLinkGuard
       // @see https://www.drupal.org/project/canvas/issues/3455629
       'inputs' => [
         'absence' => [
@@ -117,6 +123,7 @@ use Symfony\Component\Validator\ConstraintViolationList;
         'uuid',
         'component_id',
         'component_version',
+        'reference',
       ],
     ],
   ],
@@ -138,6 +145,7 @@ class ComponentTreeItem extends FieldItemBase {
     'parent_uuid',
     'slot',
     'label',
+    'reference',
   ];
 
   use ComponentTreeItemListInstantiatorTrait;
@@ -173,12 +181,36 @@ class ComponentTreeItem extends FieldItemBase {
     if ($component !== NULL) {
       $dependencies['config'] = [$component->getConfigDependencyName()];
     }
+    // A picked reference is a content dependency: default content then exports
+    // and imports the entity along with the tree. A field reference depends on
+    // the config of the field, like a link to the field does.
+    $reference = $this->getReference();
+    $list = $this->getParent();
+    $coverage = $list instanceof ComponentTreeItemList ? $list->getNearestReference($this->getUuid()) : NULL;
+    if ($reference !== NULL) {
+      if ($coverage?->holderUuid === $this->getUuid() && $coverage->isField()) {
+        $field_config = $coverage->getFieldConfigDependencyName();
+        if ($field_config !== NULL) {
+          $dependencies['config'][] = $field_config;
+        }
+      }
+      elseif (ComponentTreeFieldReference::parse($reference) === NULL) {
+        $dependencies['content'] = [$reference];
+      }
+    }
+    // Links under a reference read fields of the entity it points at, not of
+    // the tree's host. Only its field metadata is needed.
     foreach ($this->getProperties() as $property) {
       if ($property instanceof DependentPluginInterface) {
         $dependencies = NestedArray::mergeDeep($dependencies, $property->calculateDependencies());
       }
       elseif ($property instanceof ContentAwareDependentInterface) {
-        $fieldable_host_entity = $host_entity instanceof FieldableEntityInterface ? $host_entity : NULL;
+        $fieldable_host_entity = match (TRUE) {
+          $coverage === NULL => $host_entity instanceof FieldableEntityInterface ? $host_entity : NULL,
+          // A reference that can't be followed has nothing to read.
+          $coverage->isResolved() => ComponentTreeReference::createStandIn($coverage->entityTypeId, $coverage->bundle),
+          default => NULL,
+        };
         $dependencies = NestedArray::mergeDeep($dependencies, $property->calculateDependencies($fieldable_host_entity));
       }
     }
@@ -273,6 +305,12 @@ class ComponentTreeItem extends FieldItemBase {
           'length' => 36,
           'not null' => TRUE,
         ],
+        'reference' => [
+          'description' => 'Entity this instance and its slots link to: entity_type:bundle:uuid.',
+          'type' => 'varchar_ascii',
+          'length' => 128,
+          'not null' => FALSE,
+        ],
         'component_id' => [
           'description' => 'The Component config entity ID.',
           'type' => 'varchar_ascii',
@@ -342,6 +380,12 @@ class ComponentTreeItem extends FieldItemBase {
       ->setSetting('case_sensitive', FALSE)
       ->setSetting('max_length', 255)
       ->addConstraint('Length', ['max' => 255])
+      ->setRequired(FALSE);
+
+    $properties['reference'] = DataDefinition::create('string')
+      ->setLabel(new TranslatableMarkup('Entity this component instance and its slots link to'))
+      ->setSetting('max_length', 128)
+      ->addConstraint('Regex', ['pattern' => ComponentTreeReference::STORED_PATTERN])
       ->setRequired(FALSE);
 
     $properties['uuid'] = DataDefinition::create('string')
@@ -521,6 +565,47 @@ class ComponentTreeItem extends FieldItemBase {
     }
   }
 
+  /**
+   * The prop source types that link a prop to the entity of a reference.
+   */
+  public const array LINK_SOURCE_TYPES = [
+    PropSource::EntityField->value,
+    PropSource::HostEntityUrl->value,
+    PropSource::HostEntity->value,
+  ];
+
+  /**
+   * Whether this instance or one of its ancestors has a reference.
+   */
+  public function isCoveredByReference(): bool {
+    $list = $this->getParent();
+    return $list instanceof ComponentTreeItemList && $list->getNearestReference($this->getUuid()) !== NULL;
+  }
+
+  /**
+   * Gets the prop source types in use that no reference makes acceptable.
+   *
+   * Under a reference, links are what the reference is for; they are checked
+   * against it instead.
+   *
+   * @see \Drupal\canvas\Plugin\Validation\Constraint\ComponentTreeMeetsRequirementsConstraintValidator
+   *
+   * @return list<string>
+   */
+  public function getPropSourceTypesOutsideReference(): array {
+    $types = $this->get('inputs')->getPropSourceTypes();
+    return $this->isCoveredByReference() ? \array_values(\array_diff($types, self::LINK_SOURCE_TYPES)) : $types;
+  }
+
+  public function getReference(): ?string {
+    return $this->get('reference')->getValue();
+  }
+
+  public function setReference(?string $reference): static {
+    $this->set('reference', $reference);
+    return $this;
+  }
+
   public function getParentUuid(): ?string {
     return $this->get('parent_uuid')->getValue();
   }
@@ -581,7 +666,7 @@ class ComponentTreeItem extends FieldItemBase {
    * @todo Move this into a normalizer at https://www.drupal.org/i/3499632
    */
   public function getClientSideRepresentation(): array {
-    return [
+    $representation = [
       'uuid' => $this->getUuid(),
       'nodeType' => 'component',
       'type' => \sprintf('%s@%s', $this->getComponentId(), $this->getComponentVersion()),
@@ -591,6 +676,18 @@ class ComponentTreeItem extends FieldItemBase {
       'name' => $this->getLabel(),
       'slots' => [],
     ];
+    $reference = $this->getReference();
+    if ($reference !== NULL) {
+      $representation['reference'] = $reference;
+      // A field reference points at what its scope says, which the client
+      // can't work out from the stored value alone.
+      $list = $this->getParent();
+      $coverage = $list instanceof ComponentTreeItemList ? $list->getNearestReference($this->getUuid()) : NULL;
+      if ($coverage?->holderUuid === $this->getUuid() && $coverage->isField() && $coverage->isResolved()) {
+        $representation['referenceTarget'] = $coverage->target();
+      }
+    }
+    return $representation;
   }
 
   /**
@@ -617,7 +714,9 @@ class ComponentTreeItem extends FieldItemBase {
     // this will catch that.
     // @see \Drupal\canvas\Plugin\Validation\Constraint\ValidComponentTreeItemConstraintValidator
     $input_values = $this->getInputs();
-    $component_violations = $source->validateComponentInput($input_values ?? [], $component_instance_uuid, $entity);
+    // Linked props under a reference can't be evaluated against the tree's
+    // host; they are checked against the reference instead.
+    $component_violations = $source->validateComponentInput($input_values ?? [], $component_instance_uuid, $this->isCoveredByReference() ? NULL : $entity, $this->isCoveredByReference());
     if ($component_violations->count() > 0) {
       // @todo Remove the foreach and use ::addAll once
       // https://www.drupal.org/project/drupal/issues/3490588 has been resolved.
@@ -693,6 +792,35 @@ class ComponentTreeItem extends FieldItemBase {
       $changed = TRUE;
     }
     $this->setInput($inputs ?? []);
+    return $changed;
+  }
+
+  /**
+   * Puts the props that are linked to content back to their default values.
+   *
+   * For when what they were linked to is gone, and so is the reference that
+   * said what that was.
+   *
+   * @return bool
+   *   Whether anything changed.
+   */
+  public function removeLinkedProps(): bool {
+    $inputs = $this->getInputs() ?? [];
+    $default_inputs = $this->getComponent()?->getComponentSource()->getDefaultExplicitInput() ?? [];
+    $requires_explicit_input = $this->getComponent()?->getComponentSource()->requiresExplicitInput() ?? FALSE;
+    $changed = FALSE;
+    foreach ($inputs as $name => $input) {
+      if (\is_array($input) && \in_array($input['sourceType'] ?? NULL, self::LINK_SOURCE_TYPES, TRUE)) {
+        unset($inputs[$name]);
+        if ($requires_explicit_input && isset($default_inputs[$name])) {
+          $inputs[$name] = $default_inputs[$name];
+        }
+        $changed = TRUE;
+      }
+    }
+    if ($changed) {
+      $this->setInput($inputs);
+    }
     return $changed;
   }
 

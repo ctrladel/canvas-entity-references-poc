@@ -16,6 +16,7 @@ import FormSkeleton from '@/components/FormSkeleton';
 import { FORM_TYPES } from '@/features/form/constants';
 import {
   clearFieldValues,
+  selectFormRebuildVersion,
   selectFormValues,
 } from '@/features/form/formStateSlice';
 import {
@@ -25,6 +26,10 @@ import {
   syncPropSourcesToResolvedValues,
 } from '@/features/layout/layoutModelSlice';
 import { findComponentByUuid } from '@/features/layout/layoutUtils';
+import {
+  findNearestReference,
+  referenceFormTarget,
+} from '@/features/layout/linkTargets';
 import {
   selectLatestUndoRedoActionId,
   selectSelectedComponentUuid,
@@ -62,6 +67,9 @@ export const useComponentTransforms = () => {
 
 interface ComponentInstanceFormRendererProps {
   queryString: string;
+  // The layout model was replaced from outside and the query string has not
+  // been rebuilt from it yet.
+  awaitingRebuild: boolean;
 }
 interface ComponentInstanceFormProps {}
 
@@ -71,7 +79,7 @@ const ComponentInstanceFormRenderer: React.FC<
   const formState = useAppSelector((state) =>
     selectFormValues(state, FORM_TYPES.COMPONENT_INSTANCE_FORM),
   );
-  const { queryString } = props;
+  const { queryString, awaitingRebuild } = props;
   const { showBoundary } = useErrorBoundary();
   const inputAndUiData: InputUIData = useInputUIData();
   const {
@@ -88,9 +96,12 @@ const ComponentInstanceFormRenderer: React.FC<
   );
   const formRef = useRef(null);
   const selectedComponentId = selectedComponent || 'noop';
-  const skip = useAppSelector((state) =>
+  const updating = useAppSelector((state) =>
     selectUpdateComponentLoadingState(state, selectedComponentId),
   );
+  // The model was replaced from outside and the parent has not yet rebuilt
+  // the query string, which still describes the old model.
+  const skip = updating || awaitingRebuild;
   const { currentData, error, originalArgs, isFetching } =
     useGetComponentInstanceFormQuery(
       { queryString: queryString, type: editorFrameContext },
@@ -290,6 +301,11 @@ const ComponentInstanceForm: React.FC<ComponentInstanceFormProps> = () => {
   const { showBoundary } = useErrorBoundary();
   const selectedComponent = useAppSelector(selectSelectedComponentUuid);
   const latestUndoRedoActionId = useAppSelector(selectLatestUndoRedoActionId);
+  const rebuildVersion = useAppSelector(selectFormRebuildVersion);
+  // The version the query string was last built for. It is set in the same
+  // effect, so in the same render, as the query string: the renderer is held
+  // back exactly until the string has been rebuilt, whether or not it changed.
+  const [builtVersion, setBuiltVersion] = useState(rebuildVersion);
 
   const [formQueryString, setFormQueryString] = useState('');
   const [emptyProp, setEmptyProp] = useState(false);
@@ -300,6 +316,10 @@ const ComponentInstanceForm: React.FC<ComponentInstanceFormProps> = () => {
   const previousModelRef = useRef<EvaluatedComponentModel | null>(null);
   const previousSelectedComponentRef = useRef<string | null>(null);
   const previousSelectedComponentTypeRef = useRef<string | null>(null);
+  // The `entity_type_id:bundle` the form was last built for, which is what the
+  // links offered in it are limited to.
+  const previousLinkTargetRef = useRef<string | null>(null);
+  const previousReferenceAboveRef = useRef<string | null>(null);
   const previousLatestUndoRedoActionIdRef = useRef<string | null>(null);
 
   const buildPreparedModel = (
@@ -333,6 +353,10 @@ const ComponentInstanceForm: React.FC<ComponentInstanceFormProps> = () => {
   }, [dispatch, selectedComponent]);
 
   useEffect(() => {
+    // This run has seen the replaced model. Its query string, if it changes,
+    // is set below in the same batch. Releases the renderer on every path,
+    // including the early returns.
+    setBuiltVersion(rebuildVersion);
     if (error) {
       showBoundary(error);
     }
@@ -412,11 +436,20 @@ const ComponentInstanceForm: React.FC<ComponentInstanceFormProps> = () => {
     // - Component version changed (a reloaded layout upgraded the instance)
     // - Undo/redo occurred (latestUndoRedoActionId changed)
     // - Source changed
+    // - The component form is told what the reference above it leads to, so a
+    //   reference set or changed above this component changes the form.
+    const linkTarget = referenceFormTarget(layout, selectedComponent);
+    // Whether a reference is above it, and which: a field is read from the
+    // entity of the reference above, not from the host.
+    const referenceAbove =
+      findNearestReference(layout, selectedComponent, true)?.reference ?? null;
     const shouldUpdate =
       !prevModel ||
       prevSelectedComponent !== selectedComponent ||
       prevSelectedComponentType !== node.type ||
       prevLatestUndoRedoActionId !== latestUndoRedoActionId ||
+      previousLinkTargetRef.current !== linkTarget ||
+      previousReferenceAboveRef.current !== referenceAbove ||
       sourceChanged;
 
     if (shouldUpdate) {
@@ -427,6 +460,10 @@ const ComponentInstanceForm: React.FC<ComponentInstanceFormProps> = () => {
         form_canvas_props: JSON.stringify(builtPreparedModel),
         form_canvas_selected: selectedComponent,
         latestUndoRedoActionId,
+        ...(linkTarget ? { form_canvas_link_target: linkTarget } : {}),
+        ...(referenceAbove
+          ? { form_canvas_reference_above: referenceAbove }
+          : {}),
       });
       const queryString = `?${query.toString()}`;
       setFormQueryString(queryString);
@@ -439,6 +476,8 @@ const ComponentInstanceForm: React.FC<ComponentInstanceFormProps> = () => {
     previousSelectedComponentRef.current = selectedComponent;
     previousSelectedComponentTypeRef.current = node.type;
     previousLatestUndoRedoActionIdRef.current = latestUndoRedoActionId;
+    previousLinkTargetRef.current = linkTarget;
+    previousReferenceAboveRef.current = referenceAbove;
 
     setComponentSource(components?.[selectedComponentType]?.source || '');
   }, [
@@ -449,6 +488,7 @@ const ComponentInstanceForm: React.FC<ComponentInstanceFormProps> = () => {
     latestUndoRedoActionId,
     layout,
     model,
+    rebuildVersion,
   ]);
   const selectedNode = selectedComponent
     ? findComponentByUuid(layout, selectedComponent)
@@ -469,7 +509,10 @@ const ComponentInstanceForm: React.FC<ComponentInstanceFormProps> = () => {
     formQueryString &&
     renderComponentId === selectedComponent && (
       <>
-        <ComponentInstanceFormRenderer queryString={formQueryString} />
+        <ComponentInstanceFormRenderer
+          queryString={formQueryString}
+          awaitingRebuild={builtVersion !== rebuildVersion}
+        />
         {componentSource === 'Module component' && emptyProp ? (
           <Text size="4">This component has no props.</Text>
         ) : (

@@ -8,6 +8,8 @@ use Drupal\canvas\AutoSave\AutoSaveManager;
 use Drupal\canvas\CanvasUriDefinitions;
 use Drupal\canvas\ClientDataToEntityConverter;
 use Drupal\canvas\ComponentSource\ComponentSourceManager;
+use Drupal\canvas\ComponentTreeLinkGuard;
+use Drupal\canvas\ComponentTreeReference;
 use Drupal\canvas\Entity\Component;
 use Drupal\canvas\Entity\ComponentTreeConfigEntityBase;
 use Drupal\canvas\Entity\ComponentTreeEntityInterface;
@@ -72,6 +74,7 @@ final class ApiLayoutController {
     private readonly LanguageManagerInterface $languageManager,
     private readonly AccountProxyInterface $currentUser,
     private readonly PageVariantResolver $pageVariantResolver,
+    private readonly ComponentTreeLinkGuard $linkGuard,
   ) {
     $theme = $this->themeManager->getActiveTheme()->getName();
     $theme_regions = system_region_list($theme);
@@ -411,7 +414,9 @@ final class ApiLayoutController {
     // Update the entity & auto-save it. We might be updating a component
     // instance version aside of the model itself.
     $host_entity = self::resolveHostEntity($entity, $preview_entity);
+    $tree_before = $this->getContentTreeValue($entity_to_patch);
     $this->updateComponentInstance($entity_to_patch, $componentInstanceUuid, $version, $model, $host_entity);
+    $this->assertMayChangeLinks($entity_to_patch, $tree_before);
     $this->autoSaveManager->saveEntity($entity_to_patch, $clientInstanceId);
 
     // Inform the UI of the updated reality.
@@ -519,7 +524,9 @@ final class ApiLayoutController {
     // Update the entity & auto-save it. This can update both:
     // - the component tree in the entity (using `layout` and `model`)
     // - the fields in the entity, if any (using `entity_form_fields`)
+    $tree_before = $this->getContentTreeValue($entity);
     $this->updateEntity($entity, $main_content_layout, $model, $entity_form_fields, $preview_entity);
+    $this->assertMayChangeLinks($entity, $tree_before);
     $this->autoSaveManager->saveEntity($entity, $clientInstanceId);
 
     return new PreviewEnvelope(
@@ -787,14 +794,30 @@ final class ApiLayoutController {
       $component = $item->getComponent()?->loadVersion($version);
       \assert($component instanceof Component);
       $item->set('component_version', $version);
-      $item->setInput(
-        $component->getComponentSource()->clientModelToInput(
-          $componentInstanceUuid,
-          $component,
-          $client_model,
-          $host_entity
-        )
+      // Under a reference, convert against a stand-in for its target: the
+      // tree's host has other fields.
+      $covering = $tree->getNearestReference($componentInstanceUuid);
+      $kept_links = [];
+      if ($covering !== NULL) {
+        // A reference that can't be followed has nothing to read: the links
+        // under it stay as stored and are out of the conversion. Changing one
+        // is refused.
+        $host_entity = $covering->isResolved() ? ComponentTreeReference::createStandIn((string) $covering->entityTypeId, (string) $covering->bundle) : NULL;
+        if (!$covering->isResolved()) {
+          $stored_inputs = $item->getValue()['inputs'] ?? [];
+          [$client_model, $kept_links] = self::withoutLinkedProps($client_model, $stored_inputs, $componentInstanceUuid);
+        }
+      }
+      $inputs = $component->getComponentSource()->clientModelToInput(
+        $componentInstanceUuid,
+        $component,
+        $client_model,
+        $host_entity
       );
+      if ($kept_links !== [] && \is_array($inputs)) {
+        $inputs = self::putBackLinkedProps($inputs, $kept_links, $stored_inputs);
+      }
+      $item->setInput($inputs);
       if ($entity instanceof ComponentTreeEntityInterface) {
         // This might be dangling item list so we should update explicitly.
         $entity->setComponentTree($tree->getValue());
@@ -837,8 +860,38 @@ final class ApiLayoutController {
       //   as well in https://drupal.org/i/3543197.
       // @todo Remove php-stan-ignore in https://drupal.org/i/3548273.
       // @phpstan-ignore-next-line argument.type
-      $entity->setComponentTree(self::convertClientToServer($layout['components'], $model, $host_entity, FALSE));
+      // The tree this request replaces: a reference that is unchanged in it is
+      // not checked again, like on a content entity.
+      $previous_items = \array_values($entity->getComponentTree()->getValue());
+      $entity->setComponentTree(self::convertClientToServer($layout['components'], $model, $host_entity, FALSE, $previous_items));
     }
+  }
+
+  /**
+   * Gets the component tree of a content entity, or NULL for any other entity.
+   *
+   * Config entities (content templates, page variants) are not page
+   * trees: who may link in them is decided by the permission to edit them.
+   *
+   * @return array<int|string, array<string, mixed>>|null
+   */
+  private function getContentTreeValue(EntityInterface $entity): ?array {
+    return $entity instanceof FieldableEntityInterface ? $this->componentTreeLoader->load($entity)->getValue() : NULL;
+  }
+
+  /**
+   * Rejects a change to the references or links of a page tree without rights.
+   *
+   * @param array<int|string, array<string, mixed>>|null $tree_before
+   *   The tree before the change, from ::getContentTreeValue().
+   *
+   * @throws \Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException
+   */
+  private function assertMayChangeLinks(EntityInterface $entity, ?array $tree_before): void {
+    if ($tree_before === NULL || !$entity instanceof FieldableEntityInterface) {
+      return;
+    }
+    $this->linkGuard->assertMayChange($this->currentUser, $tree_before, $this->componentTreeLoader->load($entity)->getValue());
   }
 
   /**

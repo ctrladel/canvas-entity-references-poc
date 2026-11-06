@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { useAppDispatch, useAppSelector } from '@/app/hooks';
 import {
-  insertNodes,
+  selectHostTarget,
   selectLayout,
   selectModel,
 } from '@/features/layout/layoutModelSlice';
@@ -12,6 +12,8 @@ import {
   findNodePathByUuid,
   recurseNodes,
 } from '@/features/layout/layoutUtils';
+import { scopeTarget } from '@/features/layout/linkTargets';
+import { pasteComponents } from '@/features/layout/referenceActions';
 import useComponentSelection from '@/hooks/useComponentSelection';
 
 import type {
@@ -28,6 +30,7 @@ function useCopyPasteComponents(): CopyPasteFunctions {
   const { componentId: selectedComponent } = useParams();
   const model = useAppSelector(selectModel);
   const layout = useAppSelector(selectLayout);
+  const hostTarget = useAppSelector(selectHostTarget);
   const { setSelectedComponent } = useComponentSelection();
   const copySelectedComponent = (component?: string) => {
     const targetComponent = component || selectedComponent;
@@ -49,7 +52,10 @@ function useCopyPasteComponents(): CopyPasteFunctions {
       JSON.stringify({
         model: copiedModels,
         layout: [copiedComponent],
-      } as LayoutModelPiece),
+        // What the field references of the copy read from, so a paste can tell
+        // whether they still make sense where they land.
+        scope: scopeTarget(layout, targetComponent, hostTarget),
+      } as LayoutModelPiece & { scope: string | null }),
     );
   };
 
@@ -79,10 +85,11 @@ function useCopyPasteComponents(): CopyPasteFunctions {
 
     const assignedUUID = uuidv4();
     dispatch(
-      insertNodes({
+      pasteComponents({
         to: to,
         layoutModel: componentFromClipboard,
         useUUID: assignedUUID,
+        scope: componentFromClipboard.scope,
       }),
     );
     setSelectedComponent(assignedUUID);

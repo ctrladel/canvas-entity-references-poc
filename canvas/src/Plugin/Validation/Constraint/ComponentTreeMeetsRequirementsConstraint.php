@@ -39,6 +39,7 @@ class ComponentTreeMeetsRequirementsConstraint extends SymfonyConstraint {
   public string $componentInterfaceAbsenceMessage = "The '@component_interface' component interface must be absent.";
   public string $propSourceTypePresenceMessage = "The '@prop_source_type_prefix' prop source type must be present.";
   public string $propSourceTypeAbsenceMessage = "The '@prop_source_type_prefix' prop source type must be absent.";
+  public string $linkDoesNotFitReferenceMessage = "Linked prop '@prop' needs @expected content, but the nearest link is to @actual.";
 
   /**
    * Requirements for component tree's inputs: absence and/or presence.

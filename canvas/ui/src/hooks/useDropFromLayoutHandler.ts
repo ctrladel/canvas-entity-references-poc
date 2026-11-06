@@ -1,8 +1,9 @@
 import _ from 'lodash';
 
 import { useAppDispatch, useAppSelector } from '@/app/hooks';
-import { moveNode, selectLayout } from '@/features/layout/layoutModelSlice';
+import { selectLayout } from '@/features/layout/layoutModelSlice';
 import { findNodePathByUuid } from '@/features/layout/layoutUtils';
+import { moveComponent } from '@/features/layout/referenceActions';
 
 import type { DragEndEvent } from '@dnd-kit/core';
 
@@ -55,8 +56,10 @@ export function useDropFromLayoutHandler() {
     // if we got this far, then we have a valid location to move the dragged component to!
     // @todo We should optimistically move the elementsInsideIframe to the new location in the iFrames dom.
     // for now, we pass true here which will put the elementsInsideIframe into a 'pending move' state.
-    afterDrag(elementsInsideIframe, true, activeUuid);
-    dispatch(moveNode({ uuid: activeUuid, to: dropPath }));
+    // The move is refused, with a notice, when the user may not move links.
+    // Nothing has moved then, so there is nothing to wait for.
+    const moved = dispatch(moveComponent({ uuid: activeUuid, to: dropPath }));
+    afterDrag(elementsInsideIframe, moved, moved ? activeUuid : undefined);
   }
 
   return { handleExistingDrop };

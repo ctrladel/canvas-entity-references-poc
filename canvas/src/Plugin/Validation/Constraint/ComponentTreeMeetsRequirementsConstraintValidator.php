@@ -5,11 +5,17 @@ declare(strict_types=1);
 namespace Drupal\canvas\Plugin\Validation\Constraint;
 
 use Drupal\canvas\Entity\Component;
+use Drupal\canvas\Entity\ComponentTreeEntityInterface;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItem;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemListInstantiatorTrait;
+use Drupal\canvas\PropExpressions\StructuredData\EntityFieldBasedPropExpressionInterface;
+use Drupal\canvas\PropExpressions\StructuredData\StructuredDataPropExpression;
+use Drupal\canvas\PropSource\PropSource;
 use Drupal\Core\Config\Schema\Sequence;
 use Drupal\Core\DependencyInjection\ContainerInjectionInterface;
+use Drupal\Core\Entity\FieldableEntityInterface;
+use Drupal\Core\Entity\Plugin\DataType\EntityAdapter;
 use Drupal\Core\TypedData\TypedDataManagerInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\Validator\Constraint;
@@ -57,7 +63,11 @@ final class ComponentTreeMeetsRequirementsConstraintValidator extends Constraint
       },
       // A multi-value config-defined component tree.
       \is_array($value) && $this->context->getObject() instanceof Sequence => function ($value): ComponentTreeItemList {
-        $list = $this->createDanglingComponentTreeItemList();
+        // The entity the tree is for is what a field reference with nothing
+        // above it is read from.
+        $root = $this->context->getRoot();
+        $host = $root instanceof EntityAdapter ? $root->getEntity() : NULL;
+        $list = $this->createDanglingComponentTreeItemList($host instanceof FieldableEntityInterface || $host instanceof ComponentTreeEntityInterface ? $host : NULL);
         // Config-defined component trees have sequence keys; drop them in favor
         // of integers prior to converting to a ComponentTreeItemList.
         // @see \Drupal\canvas\Entity\ComponentTreeConfigEntityBase::asDeterministicallyAndTranslatableKeyedComponentTreeSequence()
@@ -85,7 +95,9 @@ final class ComponentTreeMeetsRequirementsConstraintValidator extends Constraint
       $detected_component_interfaces = [...$detected_component_interfaces, ...class_implements($fqcn)];
     }
     $detected_component_interfaces = \array_unique($detected_component_interfaces);
-    $detected_prop_source_prefixes = $component_tree_item_list->getPropSourceTypes();
+    $detected_prop_source_prefixes = $value instanceof ComponentTreeItem
+      ? $value->getPropSourceTypesOutsideReference()
+      : $component_tree_item_list->getPropSourceTypesOutsideReference();
     sort($detected_prop_source_prefixes);
 
     foreach (['tree:component_ids', 'tree:component_interfaces', 'inputs:prop_sources'] as $aspect_to_check) {
@@ -153,6 +165,58 @@ final class ComponentTreeMeetsRequirementsConstraintValidator extends Constraint
               )
               ->addViolation();
           }
+        }
+      }
+    }
+
+    $this->validateLinksFitReferences($constraint, $value instanceof ComponentTreeItem ? [$value] : $component_tree_item_list, $value instanceof ComponentTreeItem ? $value->getParent() : $component_tree_item_list);
+  }
+
+  /**
+   * Checks that each link under a reference can be read from the referenced entity.
+   *
+   * Not whether the entity exists: a deleted entity gives no value, it does not
+   * block a publish.
+   *
+   * @param \Drupal\canvas\Plugin\Validation\Constraint\ComponentTreeMeetsRequirementsConstraint $constraint
+   * @param iterable<\Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItem> $items
+   *   The instances to check.
+   * @param mixed $tree
+   *   The tree whose references apply to them, if it is a component tree.
+   */
+  private function validateLinksFitReferences(ComponentTreeMeetsRequirementsConstraint $constraint, iterable $items, mixed $tree): void {
+    if (!$tree instanceof ComponentTreeItemList) {
+      return;
+    }
+    foreach ($items as $item) {
+      \assert($item instanceof ComponentTreeItem);
+      $reference = $tree->getNearestReference($item->getUuid());
+      // A reference that can't be followed is reported where it is written.
+      if ($reference === NULL || !$reference->isResolved()) {
+        continue;
+      }
+      foreach ($item->getInputs() ?? [] as $prop => $input) {
+        if (!\is_array($input) || ($input['sourceType'] ?? NULL) !== PropSource::EntityField->value) {
+          continue;
+        }
+        try {
+          $expression = StructuredDataPropExpression::fromString($input['expression'] ?? '');
+        }
+        catch (\InvalidArgumentException | \LogicException) {
+          // A malformed expression is reported by the validation of the inputs.
+          continue;
+        }
+        if (!$expression instanceof EntityFieldBasedPropExpressionInterface) {
+          continue;
+        }
+        $host_definition = $expression->getHostEntityDataDefinition();
+        if (!$reference->fits($host_definition)) {
+          $this->context->buildViolation($constraint->linkDoesNotFitReferenceMessage)
+            ->setParameter('@prop', (string) $prop)
+            ->setParameter('@expected', ($host_definition->getBundles() ?: [$host_definition->getEntityTypeId()])[0])
+            ->setParameter('@actual', $reference->bundle)
+            ->atPath(\sprintf('inputs.%s.%s', $item->getUuid(), $prop))
+            ->addViolation();
         }
       }
     }

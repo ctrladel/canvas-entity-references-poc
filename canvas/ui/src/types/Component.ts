@@ -44,6 +44,9 @@ interface BaseComponent {
   js_footer: string;
   version: string;
   broken: boolean;
+  // `entity_type_id:bundle` of each bundle that fits: the component uses the
+  // entity of its own reference, and only an entity of one of them fits.
+  ownReferenceRequirement?: string[];
   metadata?: { [key: string]: any };
 }
 
