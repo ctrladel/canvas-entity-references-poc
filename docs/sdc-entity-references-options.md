@@ -1,6 +1,6 @@
 # Entity references for SDCs in Canvas: requirements, opinions and options
 
-> AI-Generated: Yes. I used Claude Code to draft this document and most of the code it describes. I directed the design and reviewed the result.
+> AI-Generated: Yes. This document was written entirely by Claude Code, as was most of the code it describes. I directed the design and reviewed the result.
 
 This summarizes the discussion on [#3585135](https://git.drupalcode.org/project/canvas/-/work_items/3585135) and [#3573831](https://git.drupalcode.org/project/canvas/-/work_items/3573831), compares the possible approaches, and shares results from a spike. Corrections are welcome if I've misrepresented anyone's position.
 
@@ -15,7 +15,7 @@ I built a proof of concept in four stacked pieces ([README](../README.md), [find
 3. **Live placements.** An editor places a bound Pattern and picks an entity.
 4. **Pattern overrides.** A site builder exposes props, and a placement can override them.
 
-SDC files don't change. The main open product question is whether sealed placements are acceptable, with overrides only where a Pattern exposes them.
+SDC files don't change. For the scope of the issue, the fix is pieces 1 to 3 together. Referencing an entity from any component on a page, and overrides, go beyond it and can be dropped. The main open product questions are whether this split between bound Patterns and tree references is the right one, and whether copies, live placements and bound placements should become separate concepts.
 
 ## Current state
 
@@ -140,7 +140,7 @@ Builds on `canvas_pattern_components` by @longwave, which exposes a Pattern as a
 - There's an overlay between the stored form and what the editor sees, because a tree holds one prop source per prop and a host expression names one bundle. This is the hardest part of the code to follow.
 - A copy of a bound Pattern keeps its static values and picked references, not its links. Library copy versus live placement is confusing, and I don't have a settled answer.
 
-**Why not a new always-bound entity.** I traced it. The "unbound" third behaviour it would remove is about 100 lines of source and 130 of tests. The overlay stays unless there is one entity per bundle, because the links of several bundles can't sit in one tree. A new entity also needs routes, schema, an audit, access, a permission, a library list, an editor frame and a component source plugin that Canvas wires by hand for each tree type, with no seam. I estimated 1,000 to 1,500 lines. One entity per bundle, like Content Templates, would remove roughly 2,400 lines of source and the overlay, but then the layout is duplicated per bundle and one card can't source from several content types. That is a product decision about bundles. If one entity per bundle is acceptable, a new entity is the better design.
+**A separate concept for bound Patterns.** I traced it. The "unbound" third behaviour it would remove is about 100 lines of source and 130 of tests. The overlay stays unless there is one entity per bundle, because the links of several bundles can't sit in one tree. A new entity also needs routes, schema, an audit, access, a permission, a library list, an editor frame and a component source plugin that Canvas wires by hand for each tree type, with no seam. I estimated 1,000 to 1,500 lines. One entity per bundle, like Content Templates, would remove roughly 2,400 lines of source and the overlay, but then the layout is duplicated per bundle and one card can't source from several content types. That is a product decision about bundles. Either way, I think the three behaviours warrant their own concepts, or at minimum a clear separation in the UI. The spike stays on Patterns because it was the shorter path.
 
 ## Spike results
 
@@ -158,11 +158,13 @@ Canvas 1.x and Drupal 11.4: kernel and client tests per piece, plus browser and 
 
 ## Questions
 
-For @lauriii and product:
-1. Are sealed placements acceptable, with overrides only where a Pattern exposes them? Or are one-off inputs a hard requirement?
-2. What should render when a linked value is empty or the viewer can't access it? The spike renders the component's example value under a reference.
+For @lauriii, @pameeela and product:
+1. @lauriii: you said you're aiming to support both view mode style and manual mapping. Does this split, with bound Patterns for one and tree references for the other, match what you had in mind?
+2. @pameeela: does this fit how site builders and editors would expect to show content in components?
+3. Are sealed placements enough, with overrides only where a Pattern exposes them? Or are one-off inputs a hard requirement?
+4. What should render when a linked value is empty or the viewer can't access it? The spike renders the component's example value under a reference.
 
 For maintainers:
-3. Is a Pattern the right home for the mapping, or should this be a new concept? Is one entity per bundle acceptable?
-4. Would you accept a small interface such as `TargetEntityDataDefinitionProviderInterface` in place of the `instanceof ContentTemplate` checks, so the linker works outside Content Templates?
-5. @pdureau, @wim leers: does keeping the mapping on a Pattern, with SDC files untouched, meet your constraint?
+5. Should copies, live placements and bound placements become separate concepts, or at least be clearly separated in the UI? If a separate entity, is one entity per bundle acceptable?
+6. Would you accept a small interface such as `TargetEntityDataDefinitionProviderInterface` in place of the `instanceof ContentTemplate` checks, so the linker works outside Content Templates?
+7. @pdureau, @wim leers: does keeping the mapping outside SDCs, with SDC files untouched, meet your constraint?

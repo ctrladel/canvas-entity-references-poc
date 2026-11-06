@@ -1,6 +1,6 @@
 # Canvas entity references for SDCs: a proof of concept
 
-> AI-Generated: Yes. I used Claude Code to draft this document and most of the code it describes. I directed the design and reviewed the result.
+> AI-Generated: Yes. This document was written entirely by Claude Code, as was most of the code it describes. I directed the design and reviewed the result.
 
 I built a proof of concept that lets SDCs in Canvas show entity data without changing SDC files. Any component can reference an entity and have its props linked to that entity's fields, and site builders can map a Pattern once so editors only place it and pick an entity.
 
@@ -41,6 +41,8 @@ That drops the database and starts over. There's no upgrade path between branche
 
 Each PR is against the one before it. The first can be judged alone.
 
+For the scope of [#3585135](https://git.drupalcode.org/project/canvas/-/work_items/3585135), the fix is PRs 1 to 3 together: a site builder maps a Pattern to content types once, and an editor places it and picks an entity. Referencing an entity from any component on a page (part of PR 1) and overrides (PR 4) go beyond that. They fell out of the same model, but either can be dropped without affecting the rest.
+
 | PR | Branch | Adds | Needs |
 |---|---|---|---|
 | 1 | `tree-references` | A component can reference an entity, and its props link to that entity's fields | `main` |
@@ -64,7 +66,7 @@ Pattern components from `canvas_pattern_components` already make "Pattern" mean 
 
 Every Pattern can still be inserted as a copy. A copy of a bound Pattern keeps its static values and any picked references inside it, not its links. I found this the most confusing part of building on Patterns, and I don't have a settled answer for it.
 
-I looked at moving bound Patterns to their own always-bound config entity. It only gets simpler with one entity per bundle, because a tree holds one expression per prop. That gives up one card sourcing from several content types with the same display. So I kept them on Patterns. The reasoning is in [spike-findings.md](docs/spike-findings.md).
+The proof of concept builds on Patterns because they already had the storage and editor this needed. I don't think that's where it should end up. Copies, live placements and bound placements behave differently enough that I think they warrant their own concepts, or at minimum a clear separation in the UI. [spike-findings.md](docs/spike-findings.md) has what a separate entity for bound Patterns would cost.
 
 ## Other approaches
 
@@ -124,5 +126,3 @@ Not tested: translation, workspaces, usage tracking, the CLI, Workbench and head
 `demo/` is a small module, `canvas_demo`, for trying the work. It isn't part of the proposal. It has four SDCs in the colours of the Drupal brand book (a three-column grid, a card with `tone`, `image` and `url` props, a testimonial with an attribution slot, and an attribution with a photo), two content types with invented content (Person, with five people and their photos, and Product, with seven products, an image each and an Expert that references a Person), and a Welcome page. The illustrations are generated and live in `demo/images`. `demo/setup/NN-*.php` scripts build sample content and are run in order. `main` has the first. Each branch adds one for its piece: a Team page whose cards link to people, a Pattern bound to Person, a People page with the Pattern placed once per person, and a Featured people page where the Pattern's `tone` is exposed and overridden on one placement. The demo setup commit of each PR is the one that adds its script.
 
 `pattern-overrides` also has `demo/record`, the Playwright script that records the demo video of the work from a running site. `demo/record/README.md` says how to run it.
-
-AI-Generated: Yes. I used Claude Code to generate most of this code and to help draft this description. I directed the design and reviewed the result.

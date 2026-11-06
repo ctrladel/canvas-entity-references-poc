@@ -1,6 +1,6 @@
 # Entity references for SDCs in Canvas: findings
 
-> AI-Generated: Yes. I used Claude Code to draft this document and most of the code it describes. I directed the design and reviewed the result.
+> AI-Generated: Yes. This document was written entirely by Claude Code, as was most of the code it describes. I directed the design and reviewed the result.
 
 What I found building the proof of concept, by piece. The code is in four stacked PRs ([README](../README.md)). The alternatives and the discussion are in [sdc-entity-references-options.md](sdc-entity-references-options.md).
 
@@ -8,13 +8,15 @@ What I found building the proof of concept, by piece. The code is in four stacke
 
 The approach works at spike level, without changing SDC files or core. An editor can reference an entity from a component and link its props to that entity's fields. A site builder can map a Pattern to content types once, in the Pattern editor with the usual link control. An editor can place the Pattern, pick an entity and publish, and the page shows that entity's values. Editing the entity or the Pattern reaches every placement, including on a cached page. A site builder can opt specific props into per-placement overrides.
 
+For the scope of [#3585135](https://git.drupalcode.org/project/canvas/-/work_items/3585135), the fix is pieces 1 to 3 together. Referencing an entity from any component on a page, and overrides, go beyond it and can be dropped without affecting the rest.
+
 The evidence is kernel and client tests, plus browser checks and live cache checks on the spike. It is not production-level. It does not show that the design is the right one, only that nothing I tried broke it.
 
 What a maintainer will most likely push on:
-- The mapping lives in a Pattern's third-party settings, outside the tree, with an overlay in the editor. It is the most complicated part of the code, and the reason is in "Why not a separate entity" below.
+- The mapping lives in a Pattern's third-party settings, outside the tree, with an overlay in the editor. It is the most complicated part of the code, and the reason is in "A separate concept for bound Patterns" below.
 - The component source plugin API is still private ([#3520484](https://git.drupalcode.org/project/canvas/-/work_items/3520484)). The Pattern pieces depend on it.
 - Several Canvas changes are specific to bound Patterns, not seams ("Changes in Canvas that aren't generic").
-- Sealed placements with opt-in overrides is a product decision I can't make.
+- Pattern means three different things after this. I built on Patterns, but I think the three warrant their own concepts, or at least a clear separation in the UI.
 
 ## What was run
 
@@ -97,7 +99,7 @@ What a maintainer will most likely push on:
 - Overrides are static and not translatable. A stale static value is stored unchecked and validated when it is exposed again.
 - An override whose evaluation throws shows its stored value as overridden. It is logged.
 
-## Why not a separate entity for bound Patterns
+## A separate concept for bound Patterns
 
 I traced what a new, always-bound config entity would change. Nothing was built. The full trace is in the working notes and is summarised here.
 
@@ -110,7 +112,7 @@ Pattern means three things: copy, live, and live and bound. A separate entity fo
 - The cost of that is what makes bound Patterns worth having: one card that sources from several content types and keeps the same display. With one entity per bundle, the layout is duplicated, and the library lists "Card (Article)" and "Card (News)".
 - Storing links in the tree of the existing Pattern, for a single bundle, would need a mode switch in the class, because a tree with links is invalid as a copy. A new entity avoids that, but only with one bundle per entity.
 
-So whether it is easier is a product decision about bundles, not a code-structure one. Without it the answer is no, not significantly. I kept bound Patterns on Patterns. If one entity per bundle is acceptable, a new entity is the better design and I'd like to know.
+So a separate entity isn't much simpler in code unless it's one entity per bundle, and that's a product decision. I kept the proof of concept on Patterns because it was the shorter path, not because I think it's the right home. Copies, live placements and bound placements behave differently enough that I think they warrant their own concepts, or at minimum a clear separation in the UI. The costs above are what that would take in code.
 
 The override and placement code doesn't depend on which entity hosts it. It would be renamed, not rewritten.
 
@@ -139,9 +141,11 @@ The list is in the [README](../README.md#known-limits). Things not tested at all
 
 ## Questions for product and maintainers
 
-1. Are sealed placements with opt-in overrides the right default, or are one-off inputs a hard requirement?
-2. What should render when a linked value is empty or inaccessible? The spike renders the component's example value under a reference. Is that predictable enough?
-3. Is a Pattern the right home for the mapping, or should it be a new concept? If it should be, is one entity per bundle acceptable?
-4. Would you accept `TargetEntityDataDefinitionProviderInterface` and the own-reference seam as generic?
-5. Would you accept a hook around the auto-save manager in place of replacing the class?
-6. @pdureau, @wim leers: does keeping the mapping on a Pattern, with SDC files untouched, meet your constraint?
+1. @lauriii: you said you're aiming to support both view mode style and manual mapping. Does this split, with bound Patterns for one and tree references for the other, match what you had in mind?
+2. Should copies, live placements and bound placements become separate concepts, or at least be clearly separated in the UI? If a separate entity, is one entity per bundle acceptable?
+3. @pameeela: does this fit how site builders and editors would expect to show content in components?
+4. Are sealed placements with opt-in overrides enough, or are one-off inputs a hard requirement?
+5. What should render when a linked value is empty or inaccessible? The spike renders the component's example value under a reference. Is that predictable enough?
+6. Would you accept `TargetEntityDataDefinitionProviderInterface` and the own-reference seam as generic?
+7. Would you accept a hook around the auto-save manager in place of replacing the class?
+8. @pdureau, @wim leers: does keeping the mapping outside SDCs, with SDC files untouched, meet your constraint?
